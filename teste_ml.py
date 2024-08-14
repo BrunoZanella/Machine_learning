@@ -138,8 +138,6 @@ async def fetch_data():
             await cursor.execute(query_log)
             log_data = await cursor.fetchall() or []
 
-            if not log_data:
-                return pd.DataFrame(columns=['estado', 'alerta', 'cod_equipamento', 'nome_equipamento', 'nome_usina', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, 100, 0
 
             # Extracting unique cod_usina and cod_equipamento
             cod_usinas = {row[0] for row in log_data}
@@ -210,7 +208,7 @@ async def fetch_data():
             alertas_data = await cursor.fetchall() or []
 
             # Calcular o horário de uma hora atrás
-            one_hour_ago = datetime.now() - timedelta(hours=1)
+        #    one_hour_ago = datetime.now() - timedelta(hours=1)
 
             # Definir o fuso horário de São Paulo
             sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
@@ -233,7 +231,8 @@ async def fetch_data():
             """
             await cursor.execute(query_max_value)
             max_value_result = await cursor.fetchone()
-            max_value = max_value_result[0] if max_value_result and max_value_result[0] not in (0, None) else 100  # Padrão para 100 se não houver resultados
+            max_value = max_value_result[0] if max_value_result and max_value_result[0] not in (0, None) else 100
+
 
             # Query para contar a quantidade de equipamentos com data_cadastro_previsto ou data_cadastro_quebra no dia atual
             query_count_previsto_quebra = """
@@ -291,6 +290,9 @@ async def fetch_data():
 
             # Contar a quantidade de equipamentos com alerta = 1 e cod_campo = 114
             alerta_count = len(df_alertas)
+
+            if not log_data:
+                return pd.DataFrame(columns=['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, 100, 0
 
     pool.close()
     await pool.wait_closed()
