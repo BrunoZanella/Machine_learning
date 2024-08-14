@@ -281,7 +281,7 @@ async def fetch_data():
             df_log = df_log.groupby('cod_equipamento').apply(update_alerta).reset_index(drop=True)
 
             # Ordenar as colunas na ordem desejada
-            df_log = df_log[['estado', 'alerta', 'cod_equipamento', 'nome_equipamento', 'nome_usina', 'data_cadastro_previsto', 'data_cadastro_quebra']]
+            df_log = df_log[['estado', 'alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']]
 
             # Contar a quantidade de equipamentos com alerta = 1 e cod_campo = 114
             alerta_count = len(df_alertas)
@@ -315,22 +315,34 @@ async def main():
             now = datetime.now(tz_sao_paulo)
             st.write(f"Atualizado em: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            # Exibir o gauge com a quantidade de alertas
             fig = go.Figure(go.Indicator(
-                mode="gauge+number",
+                mode="gauge+number+delta",
                 value=alerta_count,
                 title={'text': "Equipamentos com Alerta"},
                 gauge={
-                    'axis': {'range': [0, max_value]},  # Ajuste o intervalo do gauge conforme o valor máximo calculado
-                    'bar': {'color': "#FF4B4B"},
-                    'bgcolor': "#262730",
+                    'axis': {'range': [0, max_value]},  # Intervalo do gauge com o valor máximo
+                    'bar': {'color': "#FF4B4B"},  # Cor da barra do gauge
+                    'bgcolor': "#262730",  # Cor de fundo
                     'steps': [
-                        {'range': [0, max_value * 0.5], 'color': "#FF4B4B"},
-                        {'range': [alerta_count, max_value], 'color': "#FF7F7F"}
+                        {'range': [0, max_value], 'color': "#262730"}  # Cor de fundo do gauge
                     ]
                 },
-                number={'font': {'size': 20, 'color': "#FAFAFA"}}
+                number={'font': {'size': 20, 'color': "#FAFAFA"}},  # Cor do texto do número
+                delta={'reference': max_value, 'relative': True, 'position': "top"}  # Adiciona uma referência ao valor máximo
             ))
+            # Adicionar uma anotação para o valor máximo
+            fig.add_annotation(
+                x=0.5,
+                y=0.5,
+                text=f"Máx: {max_value}",
+                showarrow=False,
+                font=dict(size=14, color="white"),
+                align="center",
+                xref="paper",
+                yref="paper",
+                opacity=0.8
+            )
+
 
             # Ajustar o layout do gráfico para controlar o tamanho
             fig.update_layout(
@@ -342,6 +354,7 @@ async def main():
 
             st.plotly_chart(fig, use_container_width=True)
 
+
             # Exibir o número de equipamentos com data de cadastro prevista no dia atual
             st.markdown(f'**Quantidade de alerta diário:**<br>{count_previsto}', unsafe_allow_html=True)
 
@@ -351,8 +364,8 @@ async def main():
             data = data.rename(columns={
                 'alerta': 'Alerta',
                 'cod_equipamento': 'Código Equipamento',
-                'nome_equipamento': 'Nome Equipamento',
-                'nome_usina': 'Nome Usina',
+                'nome_equipamento': 'Equipamento',
+                'nome_usina': 'Usina',
                 'data_cadastro_previsto': 'Data Cadastro Previsto',
                 'data_cadastro_quebra': 'Data Cadastro Quebra',
                 'estado': 'Estado'
