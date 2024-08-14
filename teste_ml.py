@@ -210,7 +210,14 @@ async def fetch_data():
             alertas_data = await cursor.fetchall() or []
 
             # Calcular o horário de uma hora atrás
-            one_hour_ago = datetime.now() - timedelta(hours=1)
+        #    one_hour_ago = datetime.now() - timedelta(hours=1)
+
+            # Definir o fuso horário de São Paulo
+            sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
+
+            # Calcular o horário de uma hora atrás no fuso horário de São Paulo
+            now = datetime.now(sao_paulo_tz)
+            one_hour_ago = now - timedelta(hours=1)
 
             # Query para obter o valor máximo das leituras nas últimas 1 hora
             query_max_value = f"""
