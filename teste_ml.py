@@ -104,6 +104,7 @@ async def fetch_data():
     # Cria o pool de conexão assíncrono usando as configurações do secrets.toml
     pool = await aiomysql.create_pool(
         host=st.secrets["mysql"]["host"],
+        port=int(st.secrets["mysql"]["port"]),
         user=st.secrets["mysql"]["user"],
         password=st.secrets["mysql"]["password"],
         db=st.secrets["mysql"]["database"],
