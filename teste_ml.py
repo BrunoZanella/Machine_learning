@@ -55,11 +55,11 @@ st.markdown("""
 
     td.estado-sem-parada {
         background-color: #97FF4B;
-        color: #000000; /* Preto para 'sem parada' */
+        color: #000000; /* Preto para 'Sem parada' */
     }
 
     td.estado-em-funcionamento {
-        background-color: #FFFF00; /* Amarelo para 'em funcionamento' */
+        background-color: #FFFF00; /* Amarelo para 'Em funcionamento' */
         color: #000000; /* Preto para contraste */
     }
 
@@ -210,7 +210,7 @@ async def fetch_data():
             alertas_data = await cursor.fetchall() or []
 
             # Calcular o horário de uma hora atrás
-        #    one_hour_ago = datetime.now() - timedelta(hours=1)
+            one_hour_ago = datetime.now() - timedelta(hours=1)
 
             # Definir o fuso horário de São Paulo
             sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
@@ -229,11 +229,11 @@ async def fetch_data():
                 AND valor_3 > 0 
                 AND valor_4 > 0 
                 AND valor_5 > 0
-                AND data_cadastro >= '{one_hour_ago.strftime('%Y-%m-%d %H:%M:%S')}'
+                AND data_cadastro <= '{one_hour_ago.strftime('%Y-%m-%d %H:%M:%S')}'
             """
             await cursor.execute(query_max_value)
             max_value_result = await cursor.fetchone()
-            max_value = max_value_result[0] if max_value_result and max_value_result[0] is not None else 100  # Padrão para 100 se não houver resultados
+            max_value = max_value_result[0] if max_value_result and max_value_result[0] not in (0, None) else 100  # Padrão para 100 se não houver resultados
 
             # Query para contar a quantidade de equipamentos com data_cadastro_previsto ou data_cadastro_quebra no dia atual
             query_count_previsto_quebra = """
@@ -262,7 +262,7 @@ async def fetch_data():
             df_log = df_log.merge(df_equipamentos, how='left', left_on='cod_equipamento', right_on='codigo').drop(columns=['codigo'])
 
             # Adicionar a coluna 'estado'
-            df_log['estado'] = df_log['data_cadastro_quebra'].apply(lambda x: 'parada' if pd.notna(x) else 'sem parada')
+            df_log['estado'] = df_log['data_cadastro_quebra'].apply(lambda x: 'Parada' if pd.notna(x) else 'Sem parada')
 
             # Verificar se o equipamento está na lista de alertas
             df_log['alerta'] = df_log['cod_equipamento'].apply(lambda x: 'Sim' if x in df_alertas['cod_equipamento'].values else 'Não')
@@ -280,8 +280,14 @@ async def fetch_data():
 
             df_log = df_log.groupby('cod_equipamento').apply(update_alerta).reset_index(drop=True)
 
-            # Ordenar as colunas na ordem desejada
-            df_log = df_log[['estado', 'alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']]
+            # Criar um dicionário para mapear cod_equipamento ao valor do alerta
+            alerta_dict = {item['cod_equipamento']: item['alerta'] for item in tipo_alerta_data}
+
+            # Adicionar a coluna 'tipo_alerta' ao DataFrame
+            df_log['tipo_alerta'] = df_log['cod_equipamento'].astype(str).map(alerta_dict)
+
+            # Ordenar as colunas na ordem desejada, incluindo 'tipo_alerta'
+            df_log = df_log[['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']]
 
             # Contar a quantidade de equipamentos com alerta = 1 e cod_campo = 114
             alerta_count = len(df_alertas)
@@ -310,7 +316,7 @@ async def main():
         with placeholder_gauge.container():
             st.markdown('<div class="main-container">', unsafe_allow_html=True)
             st.markdown('<h2>Relatório de Quebras Diário</h2>', unsafe_allow_html=True)
-            
+
             # Obter a hora atual em São Paulo
             now = datetime.now(tz_sao_paulo)
             st.write(f"Atualizado em: {now.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -329,6 +335,7 @@ async def main():
                 },
                 number={'font': {'size': 20, 'color': "#FAFAFA"}},  # Cor do texto do número
                 delta={'reference': max_value, 'relative': True, 'position': "top"}  # Adiciona uma referência ao valor máximo
+
             ))
             # Adicionar uma anotação para o valor máximo
             fig.add_annotation(
@@ -362,20 +369,21 @@ async def main():
         if isinstance(data, pd.DataFrame):
             # Renomear as colunas
             data = data.rename(columns={
-                'alerta': 'Alerta',
+                'alerta': 'Em Alerta',
                 'cod_equipamento': 'Código Equipamento',
                 'nome_equipamento': 'Equipamento',
                 'nome_usina': 'Usina',
                 'data_cadastro_previsto': 'Data Cadastro Previsto',
                 'data_cadastro_quebra': 'Data Cadastro Quebra',
-                'estado': 'Estado'
+                'estado': 'Estado',
+                'tipo_alerta': 'Alerta'
             })
 
-            # Atualizar a coluna 'Estado' para 'em funcionamento' quando 'Alerta' for 'Sim'
-            data['Estado'] = data.apply(lambda row: 'em funcionamento' if row['Alerta'] == 'Sim' else row['Estado'], axis=1)
+            # Atualizar a coluna 'Estado' para 'Em funcionamento' quando 'Alerta' for 'Sim'
+            data['Estado'] = data.apply(lambda row: 'Em funcionamento' if row['Em Alerta'] == 'Sim' else row['Estado'], axis=1)
 
             # Remover as colunas 'Alerta', 'Data Cadastro Previsto', 'Data Cadastro Quebra'
-            data = data.drop(columns=['Alerta', 'Data Cadastro Previsto', 'Data Cadastro Quebra'])
+            data = data.drop(columns=['Em Alerta', 'Data Cadastro Previsto', 'Data Cadastro Quebra'])
 
             # Remover o índice do DataFrame
             data.reset_index(drop=True, inplace=True)
@@ -383,11 +391,11 @@ async def main():
             # Aplicar estilos condicionais
             def apply_styles(df):
                 def color_estado(val):
-                    if val == 'parada':
+                    if val == 'Parada':
                         return 'background-color: #FF4B4B; color: #FAFAFA;'  # Vermelho
-                    elif val == 'sem parada':
+                    elif val == 'Sem parada':
                         return 'background-color: #97FF4B; color: #000000;'  # Verde
-                    elif val == 'em funcionamento':
+                    elif val == 'Em funcionamento':
                         return 'background-color: #FFFF00; color: #000000;'  # Amarelo
                     else:
                         return ''
