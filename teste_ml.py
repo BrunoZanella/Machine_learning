@@ -5,6 +5,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import streamlit as st
+import pytz
 
 # Configurar a página do Streamlit
 st.set_page_config(
@@ -101,6 +102,16 @@ st.markdown("""
 
 
 async def fetch_data():
+
+    # pool = await aiomysql.create_pool(
+    #     host="192.168.4.50",
+    #     user="bruno",
+    #     password="superbancoml",
+    #     db="machine_learning",
+    #     minsize=1,
+    #     maxsize=10
+    # )
+
     # Cria o pool de conexão assíncrono usando as configurações do secrets.toml
     pool = await aiomysql.create_pool(
         host=st.secrets["mysql"]["host"],
@@ -187,7 +198,7 @@ async def fetch_data():
                             'alerta': alerta
                         })
                         
-            print('tipo_alerta_data',tipo_alerta_data)
+        #    print('tipo_alerta_data',tipo_alerta_data)
             
             # Query para obter os equipamentos com alerta = 1 e cod_campo = 114
             query_alertas = """
@@ -277,17 +288,25 @@ async def fetch_data():
 
 
 async def main():
-    placeholder = st.empty()
+    # Espaços reservados para os elementos que serão atualizados
+    placeholder_gauge = st.empty()
+    placeholder_table = st.empty()
+
+    # Definir o fuso horário de São Paulo
+    tz_sao_paulo = pytz.timezone('America/Sao_Paulo')
+
     while True:
         # Recuperar os dados
         data, alerta_count, max_value, count_previsto = await fetch_data()
 
-        # Sobrescrever a exibição no Streamlit
-        with placeholder.container():
+        # Atualizar o gauge
+        with placeholder_gauge.container():
             st.markdown('<div class="main-container">', unsafe_allow_html=True)
             st.markdown('<h2>Relatório de Quebras Diário</h2>', unsafe_allow_html=True)
-            st.write(f"Atualizado em: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
+            
+            # Obter a hora atual em São Paulo
+            now = datetime.now(tz_sao_paulo)
+            st.write(f"Atualizado em: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # Exibir o gauge com a quantidade de alertas
             fig = go.Figure(go.Indicator(
@@ -300,7 +319,7 @@ async def main():
                     'bgcolor': "#262730",
                     'steps': [
                         {'range': [0, max_value * 0.5], 'color': "#FF4B4B"},
-                        {'range': [alerta_count , max_value], 'color': "#FF7F7F"}
+                        {'range': [alerta_count, max_value], 'color': "#FF7F7F"}
                     ]
                 },
                 number={'font': {'size': 20, 'color': "#FAFAFA"}}
@@ -318,9 +337,30 @@ async def main():
 
             # Exibir o número de equipamentos com data de cadastro prevista no dia atual
             st.markdown(f'**Quantidade de alerta diário:**<br>{count_previsto}', unsafe_allow_html=True)
-        
 
-            # Aplicar estilos condicionais usando o estilo de DataFrame
+        # Verificar se 'data' é um DataFrame
+        if isinstance(data, pd.DataFrame):
+            # Renomear as colunas
+            data = data.rename(columns={
+                'alerta': 'Alerta',
+                'cod_equipamento': 'Código Equipamento',
+                'nome_equipamento': 'Nome Equipamento',
+                'nome_usina': 'Nome Usina',
+                'data_cadastro_previsto': 'Data Cadastro Previsto',
+                'data_cadastro_quebra': 'Data Cadastro Quebra',
+                'estado': 'Estado'
+            })
+
+            # Atualizar a coluna 'Estado' para 'em funcionamento' quando 'Alerta' for 'Sim'
+            data['Estado'] = data.apply(lambda row: 'em funcionamento' if row['Alerta'] == 'Sim' else row['Estado'], axis=1)
+
+            # Remover as colunas 'Alerta', 'Data Cadastro Previsto', 'Data Cadastro Quebra'
+            data = data.drop(columns=['Alerta', 'Data Cadastro Previsto', 'Data Cadastro Quebra'])
+
+            # Remover o índice do DataFrame
+            data.reset_index(drop=True, inplace=True)
+
+            # Aplicar estilos condicionais
             def apply_styles(df):
                 def color_estado(val):
                     if val == 'parada':
@@ -332,8 +372,8 @@ async def main():
                     else:
                         return ''
 
-                # Aplica o estilo de cor de fundo para a coluna 'estado'
-                styled_df = df.style.applymap(color_estado, subset=['estado'])
+                # Aplica o estilo de cor de fundo para a coluna 'Estado'
+                styled_df = df.style.applymap(color_estado, subset=['Estado'])
 
                 # Centraliza o texto de todas as células
                 styled_df = styled_df.set_properties(**{'text-align': 'center'})
@@ -346,23 +386,15 @@ async def main():
 
                 return styled_df
 
+            # Atualizar a tabela existente
+            with placeholder_table.container():
+                st.markdown('<div class="dataframe-container">', unsafe_allow_html=True)
+                st.dataframe(apply_styles(data), use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
-            # Atualizar a coluna 'estado' para 'em funcionamento' quando alerta for 'Sim'
-            data['estado'] = data.apply(lambda row: 'em funcionamento' if row['alerta'] == 'Sim' else row['estado'], axis=1)
-
-            # Remover a coluna 'alerta'
-            data = data.drop(columns=['alerta', 'data_cadastro_previsto', 'data_cadastro_quebra'])
-
-            # Exibir a tabela
-            st.markdown('<div class="dataframe-container">', unsafe_allow_html=True)
-            st.dataframe(apply_styles(data), use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            # Atualiza os dados a cada 1 minuto
-            await asyncio.sleep(60)
+        # Atualiza os dados a cada 1 minuto
+        await asyncio.sleep(60)
 
 # Rodar o main loop de forma assíncrona
 if __name__ == "__main__":
     asyncio.run(main())
-
-
