@@ -376,6 +376,7 @@ async def main():
             # Exibir o número de equipamentos com data de cadastro prevista no dia atual
             st.markdown(f'**Quantidade de alerta diário:**<br>{count_previsto}', unsafe_allow_html=True)
 
+
         # Verificar se 'data' é um DataFrame
         if isinstance(data, pd.DataFrame):
             # Renomear as colunas
@@ -426,10 +427,13 @@ async def main():
                 return styled_df
 
             # Atualizar a tabela existente
+
             with placeholder_table.container():
                 st.markdown('<div class="dataframe-container">', unsafe_allow_html=True)
-                st.dataframe(apply_styles(data), use_container_width=True)
+            #    st.dataframe(apply_styles(data), use_container_width=True)
+                st.table(apply_styles(data))
                 st.markdown('</div>', unsafe_allow_html=True)
+
 
         # Atualiza os dados a cada 1 minuto
         await asyncio.sleep(60)
