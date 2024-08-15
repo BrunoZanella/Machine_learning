@@ -184,6 +184,7 @@ async def fetch_data():
             cod_usinas = {row[0] for row in log_data}
             cod_equipamentos = {row[1] for row in log_data}
             data_cadastro_previsto_map = {row[1]: row[2] for row in log_data}
+            data_cadastro_quebra_map = {row[1]: row[3] for row in log_data}
 
             # Query to obtain names of usinas
             query_usinas = f"""
@@ -208,40 +209,96 @@ async def fetch_data():
             equipamentos_data = await cursor.fetchall() or []
 
 
-            # Query para verificar os alertas e previsões em um intervalo de 300 segundos
+            # # Query para verificar os alertas e previsões em um intervalo de 300 segundos
+            # tipo_alerta_data = []
+            # query_tipo_alertas = """
+            #     SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
+            #            data_cadastro_previsto, 
+            #            alerta_80, 
+            #            alerta_100, 
+            #            previsao
+            #     FROM valores_previsao
+            #     WHERE cod_equipamento = %s 
+            #       AND ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300
+            # """
+            # for cod_equipamento, data_previsto in data_cadastro_previsto_map.items():
+            #     await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto))
+            #     result = await cursor.fetchall() or []
+                
+            #     # Verificação e formatação do alerta
+            #     for row in result:
+            #         alerta = None
+            #         if row[2] == 1:  # alerta_80
+            #             alerta = "80%"
+            #         elif row[3] == 1:  # alerta_100
+            #             alerta = "100%"
+            #         elif row[4] == 1:  # previsao
+            #             alerta = "Previsão"
+                    
+            #         if alerta:
+            #             tipo_alerta_data.append({
+            #                 'cod_equipamento': row[0],
+            #             #    'data_cadastro_previsto': row[1],
+            #                 'alerta': alerta
+            #             })
+        #    print('tipo_alerta_data',tipo_alerta_data)
+
+
+            # Lista para acumular os alertas por equipamento
             tipo_alerta_data = []
-            query_tipo_alertas = """
-                SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
-                       data_cadastro_previsto, 
-                       alerta_80, 
-                       alerta_100, 
-                       previsao
-                FROM valores_previsao
-                WHERE cod_equipamento = %s 
-                  AND ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300
-            """
+
+
+            # Loop para verificar os alertas e previsões
             for cod_equipamento, data_previsto in data_cadastro_previsto_map.items():
-                await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto))
+                data_quebra = data_cadastro_quebra_map.get(cod_equipamento)
+                
+                if data_quebra:  # Se data_cadastro_quebra existir
+                    query_tipo_alertas = """
+                        SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
+                            data_cadastro_previsto, 
+                            alerta_80, 
+                            alerta_100, 
+                            previsao
+                        FROM valores_previsao
+                        WHERE cod_equipamento = %s 
+                        AND (ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300 
+                            OR ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300)
+                        ORDER BY data_cadastro_previsto
+                    """
+                    await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto, data_quebra))
+                else:  # Se data_cadastro_quebra não existir, use a hora atual como limite
+                    query_tipo_alertas = """
+                        SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
+                            data_cadastro_previsto, 
+                            alerta_80, 
+                            alerta_100, 
+                            previsao
+                        FROM valores_previsao
+                        WHERE cod_equipamento = %s 
+                        AND (ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300 
+                            OR ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300)
+                        ORDER BY data_cadastro_previsto
+                    """
+                    await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto, now))
+
                 result = await cursor.fetchall() or []
                 
-                # Verificação e formatação do alerta
+                # Verificação e acumulação dos alertas únicos
+                alertas = set()  # Usar um set para garantir que cada alerta apareça apenas uma vez
                 for row in result:
-                    alerta = None
                     if row[2] == 1:  # alerta_80
-                        alerta = "80%"
-                    elif row[3] == 1:  # alerta_100
-                        alerta = "100%"
-                    elif row[4] == 1:  # previsao
-                        alerta = "Previsão"
-                    
-                    if alerta:
-                        tipo_alerta_data.append({
-                            'cod_equipamento': row[0],
-                        #    'data_cadastro_previsto': row[1],
-                            'alerta': alerta
-                        })
-                        
-        #    print('tipo_alerta_data',tipo_alerta_data)
+                        alertas.add("80%")
+                    if row[3] == 1:  # alerta_100
+                        alertas.add("100%")
+                    if row[4] == 1:  # previsao
+                        alertas.add("Previsão")
+                
+                # Adiciona os alertas, se existirem
+                if alertas:
+                    tipo_alerta_data.append({
+                        'cod_equipamento': cod_equipamento,
+                        'alerta': ', '.join(sorted(alertas))  # Junta os alertas em ordem alfabética
+                    })
             
             # Query para obter os equipamentos com alerta = 1 e cod_campo = 114
             query_alertas = """
