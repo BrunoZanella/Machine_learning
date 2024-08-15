@@ -308,11 +308,16 @@ async def fetch_data():
 
 async def main():
     # Espaços reservados para os elementos que serão atualizados
+    placeholder_logo = st.empty()
     placeholder_gauge = st.empty()
     placeholder_table = st.empty()
 
     # Definir o fuso horário de São Paulo
     tz_sao_paulo = pytz.timezone('America/Sao_Paulo')
+
+    # Adicionar a logo no canto esquerdo
+    with placeholder_logo.container():
+        st.image('log_brg_novo_branco_2.png', width=150)
 
     while True:
         # Recuperar os dados
