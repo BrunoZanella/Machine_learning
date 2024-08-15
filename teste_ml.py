@@ -125,6 +125,44 @@ async def fetch_data():
 
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
+
+            # Calcular o horário de uma hora atrás
+        #    one_hour_ago = datetime.now() - timedelta(hours=1)
+
+            # Definir o fuso horário de São Paulo
+            sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
+
+            # Calcular o horário de uma hora atrás no fuso horário de São Paulo
+            now = datetime.now(sao_paulo_tz)
+            one_hour_ago = now - timedelta(hours=1)
+
+            # Query para obter o valor máximo das leituras nas últimas 1 hora
+            query_max_value = f"""
+                SELECT COUNT(COALESCE(valor_1, 0) + COALESCE(valor_2, 0) + COALESCE(valor_3, 0) + COALESCE(valor_4, 0) + COALESCE(valor_5, 0)) AS max_value
+                FROM leituras_consecutivas
+                WHERE cod_campo = 114 
+                AND valor_1 > 0 
+                AND valor_2 > 0 
+                AND valor_3 > 0 
+                AND valor_4 > 0 
+                AND valor_5 > 0
+                AND data_cadastro <= '{one_hour_ago.strftime('%Y-%m-%d %H:%M:%S')}'
+            """
+            await cursor.execute(query_max_value)
+            max_value_result = await cursor.fetchone()
+            max_value = max_value_result[0] if max_value_result and max_value_result[0] not in (0, None) else 100
+
+            # Query para contar a quantidade de equipamentos com data_cadastro_previsto ou data_cadastro_quebra no dia atual
+            query_count_previsto_quebra = """
+                SELECT COUNT(*) AS count_previsto_quebra
+                FROM log_relatorio_quebras
+                WHERE DATE(data_cadastro_previsto) = CURDATE()
+                   OR DATE(data_cadastro_quebra) = CURDATE()
+            """
+            await cursor.execute(query_count_previsto_quebra)
+            count_previsto_quebra_result = await cursor.fetchone()
+            count_previsto = count_previsto_quebra_result[0] if count_previsto_quebra_result and count_previsto_quebra_result[0] is not None else 0
+
             # Query to obtain today's data from log_relatorio_quebras
             query_log = """
                 SELECT CAST(cod_usina AS CHAR) AS cod_usina, 
@@ -138,6 +176,9 @@ async def fetch_data():
             await cursor.execute(query_log)
             log_data = await cursor.fetchall() or []
 
+            # If log_data is empty, return empty DataFrame with columns and default values
+            if not log_data:
+                return pd.DataFrame(columns=['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, max_value, count_previsto
 
             # Extracting unique cod_usina and cod_equipamento
             cod_usinas = {row[0] for row in log_data}
@@ -150,8 +191,12 @@ async def fetch_data():
                 FROM sup_geral.usinas
                 WHERE codigo IN %s
             """
-            await cursor.execute(query_usinas, (tuple(cod_usinas),))
-            usinas_data = await cursor.fetchall() or []
+            if cod_usinas:
+                await cursor.execute(query_usinas, (tuple(cod_usinas),))
+                usinas_data = await cursor.fetchall() or []
+            else:
+                usinas_data = []
+
                 
             # Query to obtain names of equipamentos
             query_equipamentos = f"""
@@ -207,44 +252,6 @@ async def fetch_data():
             await cursor.execute(query_alertas)
             alertas_data = await cursor.fetchall() or []
 
-            # Calcular o horário de uma hora atrás
-        #    one_hour_ago = datetime.now() - timedelta(hours=1)
-
-            # Definir o fuso horário de São Paulo
-            sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
-
-            # Calcular o horário de uma hora atrás no fuso horário de São Paulo
-            now = datetime.now(sao_paulo_tz)
-            one_hour_ago = now - timedelta(hours=1)
-
-            # Query para obter o valor máximo das leituras nas últimas 1 hora
-            query_max_value = f"""
-                SELECT COUNT(COALESCE(valor_1, 0) + COALESCE(valor_2, 0) + COALESCE(valor_3, 0) + COALESCE(valor_4, 0) + COALESCE(valor_5, 0)) AS max_value
-                FROM leituras_consecutivas
-                WHERE cod_campo = 114 
-                AND valor_1 > 0 
-                AND valor_2 > 0 
-                AND valor_3 > 0 
-                AND valor_4 > 0 
-                AND valor_5 > 0
-                AND data_cadastro <= '{one_hour_ago.strftime('%Y-%m-%d %H:%M:%S')}'
-            """
-            await cursor.execute(query_max_value)
-            max_value_result = await cursor.fetchone()
-            max_value = max_value_result[0] if max_value_result and max_value_result[0] not in (0, None) else 100
-
-
-            # Query para contar a quantidade de equipamentos com data_cadastro_previsto ou data_cadastro_quebra no dia atual
-            query_count_previsto_quebra = """
-                SELECT COUNT(*) AS count_previsto_quebra
-                FROM log_relatorio_quebras
-                WHERE DATE(data_cadastro_previsto) = CURDATE()
-                   OR DATE(data_cadastro_quebra) = CURDATE()
-            """
-            await cursor.execute(query_count_previsto_quebra)
-            count_previsto_quebra_result = await cursor.fetchone()
-            count_previsto = count_previsto_quebra_result[0] if count_previsto_quebra_result and count_previsto_quebra_result[0] is not None else 0
-
             # Convertendo resultados para DataFrame
             df_log = pd.DataFrame(log_data, columns=['cod_usina', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra'])
             df_usinas = pd.DataFrame(usinas_data, columns=['codigo', 'nome_usina'])
@@ -291,9 +298,6 @@ async def fetch_data():
             # Contar a quantidade de equipamentos com alerta = 1 e cod_campo = 114
             alerta_count = len(df_alertas)
 
-            if not log_data:
-                return pd.DataFrame(columns=['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, 100, 0
-
     pool.close()
     await pool.wait_closed()
 
@@ -313,7 +317,7 @@ async def main():
     while True:
         # Recuperar os dados
         data, alerta_count, max_value, count_previsto = await fetch_data()
-
+        
         # Atualizar o gauge
         with placeholder_gauge.container():
             st.markdown('<div class="main-container">', unsafe_allow_html=True)
