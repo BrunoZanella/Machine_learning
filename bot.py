@@ -9,6 +9,7 @@ from aiogram.types import ParseMode
 import os
 import glob
 from collections import defaultdict
+from aiogram.utils.exceptions import NetworkError
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
@@ -71,6 +72,7 @@ from email.mime.application import MIMEApplication
 
 from aiogram.utils.exceptions import MessageNotModified, MessageToDeleteNotFound
 from asyncio import sleep
+#from PIL import Image
 
 TOKEN = "6959786383:AAF6Ob3oZcUf3C0zmAOjjIr8337cV5ZkJX4"
 
@@ -127,6 +129,7 @@ class ReportStates(StatesGroup):
 main_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
 main_keyboard.add(KeyboardButton("Relatório"))
 main_keyboard.add(KeyboardButton("Geradores Em Operação"))
+main_keyboard.add(KeyboardButton("Menu"))
 
 # Teclado de opções de relatórios
 report_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -181,7 +184,7 @@ async def show_report_options(message: types.Message):
 
 # Inicializando os modelos Gemini-Pro e Gemini-Pro Vision
 gemini_model = genai.GenerativeModel('gemini-pro')
-gemini_vision_model = genai.GenerativeModel('gemini-pro-vision')
+gemini_vision_model = genai.GenerativeModel("gemini-1.5-flash")
 
 @dp.message_handler(content_types=[types.ContentType.DOCUMENT, types.ContentType.PHOTO])
 async def handle_messages(message: types.Message):
@@ -192,13 +195,13 @@ async def handle_messages(message: types.Message):
             # Baixando a imagem
             photo = message.photo[-1]
             photo_data = await photo.download(destination=tempfile.mktemp(suffix='.jpg'))
-            
+        
             # Abrindo a imagem com PIL
-            image = Image.open(photo_data.name)
+            image = PILImage.open(photo_data.name)
             
             # Iniciando uma sessão de chat com o modelo Gemini-Pro Vision
             chat = gemini_vision_model.start_chat(history=[])
-
+                
             # Enviando a imagem para o modelo Gemini-Pro Vision
             response = chat.send_message(image)
             response_text = response.text
@@ -1499,6 +1502,7 @@ async def monitor_log_file():
         #    mensagem = global_vars["mensagem"]
         #    mensagem2 = global_vars["mensagem2"]
             user_id = global_vars["user_id"]
+            chat_id = global_vars["user_id"]
             pdf_file_path = global_vars["pdf_file_path"]
             period = global_vars["period"]
             funcionamento = global_vars["funcionamento"]
@@ -1560,8 +1564,9 @@ async def monitor_log_file():
                                             await teste_menu(user_message)
 
                                             # Envia a mensagem ao grupo
-                                            mensagem = f'Usuário {nome_usuario} completou o pedido do Geradores Em Operação com erro e sucesso.'
-                                            await bot.send_message(id_grupo, mensagem)
+                                            mensagem_geradores = f'Usuário {nome_usuario} completou o pedido do Geradores Em Operação com erro e sucesso.'
+                                            await bot.send_message(id_grupo, mensagem_geradores)
+
                                         else:
                                             print("user_message não está inicializado corretamente.")
                                         break
@@ -2721,7 +2726,6 @@ async def clean_temp_files():
 
 
 
-print('BOT inicializado 1.')
 
 tabelas = 'sup_geral.leituras'
 
@@ -2955,7 +2959,7 @@ async def id_chat_usuario(username, pool):
 #                 await bot.send_message(chat_id, "Escolha uma opção:", reply_markup=keyboard)
                 
 # async def criar_menu():
-#     menu_button = types.KeyboardButton('/menu')
+#     menu_button = types.KeyboardButton('/Menu')
 #     teclado_menu = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
 #     teclado_menu.add(menu_button)
 #     return teclado_menu
@@ -2975,7 +2979,7 @@ async def enviar_menu_grupo(chat_id, state: FSMContext):
                 if 'menu_message_id' in user_data:
                     try:
                         # Verificar se a mensagem ainda existe
-                        await bot.edit_message_text(chat_id=chat_id, message_id=user_data['menu_message_id'], text="Recarregando o menu...", reply_markup=None)
+                        await bot.edit_message_text(chat_id=chat_id, message_id=user_data['menu_message_id'], text="Recarregando o Menu...", reply_markup=None)
                     except:
                         # Se a mensagem não existir, envia novamente
                         await send_menu(chat_id, user_type, state)
@@ -2997,6 +3001,7 @@ async def send_menu(chat_id, user_type, state: FSMContext):
             InlineKeyboardButton("Digitar cod_usina", callback_data='1'),
             InlineKeyboardButton("Digitar cod_equipamento", callback_data='2'),
             InlineKeyboardButton("Editar Usinas cadastradas", callback_data='5'),
+            InlineKeyboardButton("Receber todos os tipos de notificações", callback_data='6'),
         ]
     
     keyboard.add(*buttons)
@@ -3006,192 +3011,13 @@ async def send_menu(chat_id, user_type, state: FSMContext):
     await state.update_data(menu_message_id=sent_message.message_id)
 
 async def criar_menu():
-    menu_button = types.KeyboardButton('/menu')
+    menu_button = types.KeyboardButton('Menu')
     teclado_menu = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     teclado_menu.add(menu_button)
     return teclado_menu
 
 
 
-
-
-  
-
-# Função assíncrona para monitorar o arquivo de log
-async def monitor_geradores_operacao():
-    id_grupo = global_vars["id_grupo"]
-
-    while True:
-        try:
-            log_file_path = global_vars["log_file_path"]
-            last_read_line = global_vars["last_read_line"]
-            user_id = global_vars["user_id"]
-            nome_usuario = global_vars["nome_usuario"]
-            
-
-            with open(log_file_path, 'r') as file:
-                lines = file.readlines()
-                current_total_lines = len(lines)
-
-                if last_read_line < current_total_lines:
-                    new_lines = lines[last_read_line:current_total_lines]
-                    global_vars["last_read_line"] = current_total_lines
-
-                    for line in new_lines:
-                        if "linhas no intervalo:" not in line:
-                            sys.stdout.flush()
-                            if 'clicou no teste' in line:
-                                for error_line in new_lines:
-                                    if "ERROR" in error_line and "asyncio:Task was destroyed but it is pending" in error_line:
-                                        print("\n\nEncontrou um erro no intervalo de Geradores Em Operação!\n\n")
-                                    #    pool = await create_pool()
-
-                                        # Envia a mensagem ao grupo
-                                        mensagem = f'Usuário {nome_usuario} completou o pedido do Geradores Em Operação com erro e sucesso.'
-                                        await bot.send_message(id_grupo, mensagem)
-
-                                        # Reinicia a função teste_menu
-                                        await teste_menu(global_vars["user_message"], retry=True)
-                                        break
-                                else:
-                                    print("\n\nNão Encontrou um erro no intervalo de Geradores Em Operação!\n\n")
-                                    break
-
-        except Exception as e:
-            print(f"Erro ao monitorar o arquivo de log: {str(e)}")
-
-        await asyncio.sleep(40)  # Verifica o arquivo a cada 30 segundos
-
-
-#@dp.message_handler(commands=['teste'])
-'''
-@dp.message_handler(lambda message: message.text == "Geradores Em Operação")
-async def teste_menu(message: types.Message):
-    print('*****************************************************************************************************************')
-    tempo_inicial = datetime.now()
-    data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-    print('clicou no teste', data_cadastro_formatada)
-    
-    try:
-
-        chat_id = message.chat.id
-        print('chat_id', chat_id)
-        pool = await create_pool()
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute("SELECT usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
-                result = await cursor.fetchone()
-
-                if result is not None:
-                    username = result[0]
-                    timestamp = int(time.mktime(message.date.timetuple()))
-                    user_message = types.Message(message_id=message.message_id, from_user=message.from_user, chat=message.chat, date=timestamp, text=username)
-                    global_vars["user_message"] = user_message
-
-                    valores_atuais_str = 0
-
-                    async with pool.acquire() as conn:
-                        async with conn.cursor() as cursor:
-                            await cursor.execute("SELECT nome, codigo FROM sup_geral.usuarios WHERE login = %s", (username,))
-                            result = await cursor.fetchone()
-                            if result is not None:
-                                nome_supervisorio, cod_usuario = result
-
-                                usinas_equipamentos = {}
-
-                                await cursor.execute("SELECT codigo FROM sup_geral.usinas WHERE ativo = 1")
-                                cod_usinas = await cursor.fetchall()
-                                mensagem_total_equipamentos = ""
-
-                                mensagem = f"Usina de {nome_supervisorio} e seus equipamentos:\n\n"
-                                total_equipamentos = 0
-                                total_equipamentos_true = 0
-
-                                for cod_usina_tuple in cod_usinas:
-                                    cod_usina = cod_usina_tuple[0]
-
-                                    codigos_GMG = await selecionar_GMG(pool)
-
-                                    placeholders = ', '.join(['%s'] * len(codigos_GMG))
-                                    query = f"SELECT codigo FROM sup_geral.equipamentos WHERE cod_usina = %s AND cod_tipo_equipamento IN ({placeholders}) AND ativo = 1"
-                                    await cursor.execute(query, [cod_usina] + list(codigos_GMG))
-                                    cod_equipamentos = await cursor.fetchall()
-
-                                    equipamentos_lista = [str(resultado[0]) for resultado in cod_equipamentos]
-
-                                    for equipamento in equipamentos_lista:
-                                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(equipamento),))
-                                        valores_atuais = await cursor.fetchone()
-                                        if valores_atuais is not None:
-                                            if all(valor != 0 for valor in valores_atuais):
-                                                coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(equipamento), pool)
-                                                previsoes, alerta = await fazer_previsao(valores_atuais, coeficiente_existente, intercepto_existente, int(equipamento), pool)
-
-                                                if isinstance(previsoes, int):
-                                                    if previsoes != 0:
-                                                        total_equipamentos += 1
-
-                                                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(equipamento),))
-                                                        valores_atuais_114 = await cursor.fetchone()
-
-                                                        valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                                                        if alerta:
-                                                            total_equipamentos_true += 1
-                                                            equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {previsoes} \n{alerta}'
-                                                        else:
-                                                            equipamentos_str = f'{alerta}'
-
-                                                        if cod_usina not in usinas_equipamentos:
-                                                            await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                                                            nome_usina = await cursor.fetchone()[0]
-                                                            usinas_equipamentos[cod_usina] = {'nome': nome_usina, 'equipamentos': []}
-
-                                                        usinas_equipamentos[cod_usina]['equipamentos'].append(f'Equipamento: {equipamento}: {equipamentos_str}\n\n')
-
-                                                elif isinstance(previsoes, list):
-                                                    if not all(valor == 0 for valor in previsoes):
-                                                        total_equipamentos += 1
-
-                                                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(equipamento),))
-                                                        valores_atuais_114 = await cursor.fetchone()
-
-                                                        valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                                                        if alerta:
-                                                            total_equipamentos_true += 1
-                                                            equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {previsoes} \n{alerta}'
-                                                        else:
-                                                            equipamentos_str = f'{alerta}'
-
-                                                        if cod_usina not in usinas_equipamentos:
-                                                            await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                                                            nome_usina = (await cursor.fetchone())[0]
-                                                            usinas_equipamentos[cod_usina] = {'nome': nome_usina, 'equipamentos': []}
-
-                                                        usinas_equipamentos[cod_usina]['equipamentos'].append(f'Equipamento: {equipamento}: {equipamentos_str}\n\n')
-
-                                            mensagem = f"Usina de {nome_supervisorio} e seus equipamentos:\n\n"
-                                            for cod_usina, info in usinas_equipamentos.items():
-                                                mensagem += f'<b>Usina: {cod_usina} - {html.escape(info["nome"])}</b>  \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'
-                                                for equipamento in info['equipamentos']:
-                                                    mensagem += html.escape(equipamento)
-
-                                if len(mensagem) > 4000:
-                                    partes_mensagem = [mensagem[i:i + 4000] for i in range(0, len(mensagem), 4000)]
-                                    for parte in partes_mensagem:
-                                        await bot.send_message(chat_id, parte, parse_mode='HTML')
-                                else:
-                                    await bot.send_message(chat_id, mensagem, parse_mode='HTML')
-
-                                mensagem_total_equipamentos += f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n"
-                                print(f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n")
-                                await bot.send_message(chat_id, mensagem_total_equipamentos)
-                                print('*****************************************************************************************************************')
-                                sys.stdout.flush()
-    except Exception as e:
-        print(f"Erro em Geradores Em Operação: {e}")
-        sys.stdout.flush()
-'''
 
 @dp.message_handler(lambda message: message.text == "Geradores Em Operação")
 async def teste_menu(message: types.Message):
@@ -3200,13 +3026,12 @@ async def teste_menu(message: types.Message):
     data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
     print('clicou no teste', data_cadastro_formatada)
     pool = await create_pool()
-    
+
     if message.from_user.id:
         user_id = message.from_user.id
     else:
         user_message = global_vars["user_message"]
         user_id = user_message.chat.id
-        print('user_message.chat.id',user_message.chat.id)
 
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:   
@@ -3248,7 +3073,7 @@ async def teste_menu(message: types.Message):
                         text=message.text  # ou qualquer outro texto que deseja
                     )
                     global_vars["user_message"] = user_message
-                    print('user_message dentro do teste menu',user_message)
+                    print('user_message dentro do teste Menu',user_message)
 
                     async with pool.acquire() as conn:
                         async with conn.cursor() as cursor:
@@ -3325,17 +3150,17 @@ async def teste_menu(message: types.Message):
         sys.stdout.flush()
                 
 
-#@dp.message_handler(commands=['menu'])
-# @dp.message_handler(lambda message: message.text == "menu")
-# async def menu(message: types.Message):
+#@dp.message_handler(commands=['Menu'])
+# @dp.message_handler(lambda message: message.text == "Menu")
+# async def Menu(message: types.Message):
 #     chat_id = message.chat.id
-#     print('clicou no /menu',chat_id)
+#     print('clicou no /Menu',chat_id)
 #     await enviar_menu_grupo(chat_id)
 
-@dp.message_handler(lambda message: message.text == "menu", state='*')
-async def menu(message: types.Message, state: FSMContext):
+@dp.message_handler(lambda message: message.text == "Menu", state='*')
+async def Menu(message: types.Message, state: FSMContext):
     chat_id = message.chat.id
-    print('clicou no /menu', chat_id)
+    print('clicou no Menu', chat_id)
     await enviar_menu_grupo(chat_id, state)  # Passa o 'state' aqui
     
 class Form(StatesGroup):
@@ -3617,6 +3442,8 @@ async def monitorar_leituras_consecutivas(pool):
     equipamentos_com_alerta = {}
 
     while True:
+        # Dicionário para armazenar alarmes e cod_equipamento
+        equipamentos_alerta_0 = {}
         try:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -3725,17 +3552,27 @@ async def monitorar_leituras_consecutivas(pool):
 
                             elif alerta == 0:
                                 if cod_equipamento in equipamentos_com_alerta:
-                                    if cod_campo == 114 and all(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]):
+#                                    if cod_campo == 114 and all(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se todos os valores forem 0
+                                    if cod_campo == 114 and any(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se algum valor for 0
                                         await cursor.execute("""
                                             SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                         """, (cod_equipamento,))
                                         alarmes_ativos = await cursor.fetchall()
+                                        
+                                        # Armazene no dicionário os alarmes ativos e o cod_equipamento
+                                        equipamentos_alerta_0[cod_equipamento] = {
+                                            'alarmes': [alarme[0] for alarme in alarmes_ativos],  # Lista de códigos de alarme
+                                            'tempo_alerta_0': datetime.now()  # Tempo em que o alerta 0 foi detectado
+                                        }
+
+                                        print(f"Equipamento {cod_equipamento} armazenado no dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+            
+                                        
                                         print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 1 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
                                         if alarmes_ativos:  # Verifica se há algum alarme em alarmes_ativos
                                             print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 2',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
                                             for codigo_alarme in codigos_alarmes_desejados:
                                                 if any(codigo_alarme in [alarme[0] for alarme in alarmes_ativos] for codigo_alarme in codigos_alarmes_desejados):
-    #                                            if any(codigo_alarme == alarme[0] for alarme in alarmes_ativos):  # Verifica se o codigo_alarme está em alarmes_ativos
                                                     tempo_decorrido = datetime.now() - equipamentos_com_alerta[cod_equipamento]
                                                     await cursor.execute("""
                                                         SELECT data_cadastro_previsto, data_cadastro_quebra 
@@ -3867,7 +3704,7 @@ async def monitorar_leituras_consecutivas(pool):
             await asyncio.sleep(10)  # Espera 10 segundos antes de tentar reconectar
 
         await asyncio.sleep(60)
-
+        
 
 
 monitorando = {}
@@ -4109,74 +3946,124 @@ async def process_supervisor_name(message: types.Message, state: FSMContext):
 
 
 
+async def atualizar_usinas_usuario(pool):
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Buscar todos os cod_usuario exceto 0
+                await cursor.execute(
+                    "SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE cod_usuario <> 0"
+                )
+                cod_usuarios = await cursor.fetchall()
+                cod_usuarios = [row[0] for row in cod_usuarios]
+
+                if not cod_usuarios:
+                    return  # Nenhum cod_usuario para processar
+
+                # Gerar a consulta SQL dinâmica usando o operador IN
+                format_strings = ','.join(['%s'] * len(cod_usuarios))
+                query = f"""
+                    SELECT cod_usuario, cod_usina 
+                    FROM sup_geral.usuarios_ext_usinas 
+                    WHERE cod_usuario IN ({format_strings})
+                """
+                await cursor.execute(query, tuple(cod_usuarios))
+                usinas = await cursor.fetchall()
+
+                # Preparar uma lista de comandos de inserção
+                insercoes = []
+                for usina in usinas:
+                    cod_usuario = usina[0]
+                    cod_usina = usina[1]
+
+                    # Verificar se a combinação já existe
+                    await cursor.execute(
+                        "SELECT 1 FROM machine_learning.usinas_usuario WHERE cod_usuario = %s AND cod_usina = %s",
+                        (cod_usuario, cod_usina)
+                    )
+                    existente = await cursor.fetchone()
+
+                    if not existente:
+                        insercoes.append((cod_usuario, cod_usina))
+
+                if insercoes:
+                    # Inserir dados na tabela machine_learning.usinas_usuario
+                    await cursor.executemany(
+                        "INSERT INTO machine_learning.usinas_usuario (cod_usuario, cod_usina) VALUES (%s, %s)",
+                        insercoes
+                    )
+
+                    # Confirmar a transação
+                    await conn.commit()
+
+    except Exception as e:
+        print(f"Erro ao processar atualização de usinas: {str(e)}")
+        await asyncio.sleep(3600)  # Aguarde 1 hora antes de tentar novamente em caso de erro
+
+    # Aguardar 1 semana (604800 segundos) antes de executar novamente aguarda 3 dias 259200
+    await asyncio.sleep(259200)
+
+                
+                
+                
 # Variável global para armazenar as seleções temporárias do usuário
 user_selections = {}
 
-# Handler para exibir a lista de usinas com checkboxes
+
 @dp.callback_query_handler(lambda c: c.data == '5')
 async def editar_usinas_cadastradas(callback_query: types.CallbackQuery, state: FSMContext):
     chat_id = callback_query.message.chat.id
-    
-    pool = await create_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            # Obter o cod_usuario da tabela usuarios_telegram
-            await cursor.execute("SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
-            result = await cursor.fetchone()
 
-            if result:
-                cod_usuario = result[0]
-                
-                # Inicializar ou atualizar a lista de seleções para esse usuário no FSMContext
-                async with state.proxy() as data:
-                    data['user_selections'] = {}
+    try:
+        pool = dp.pool  # Use o pool já existente no dispatcher
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                result = await cursor.fetchone()
 
-                # Obter os cod_usina da tabela usinas_usuario
-                await cursor.execute("SELECT cod_usina, ativo FROM machine_learning.usinas_usuario WHERE cod_usuario = %s", (cod_usuario,))
-                usinas = await cursor.fetchall()
+                if result:
+                    cod_usuario = result[0]
+                    await state.update_data(user_selections={})
 
-                if usinas:
-                    # Criar a lista de botões para as usinas
-                    buttons = []
-                    for cod_usina, ativo in usinas:
-                        await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                        nome = await cursor.fetchone()
-                        if nome:
-                            # Estado do checkbox baseado na coluna ativo
-                            checkbox = "✅" if ativo else "⬜"
-                            # Armazenar o estado inicial na seleção do usuário no FSMContext
-                            async with state.proxy() as data:
-                                data['user_selections'][cod_usina] = ativo
-                            buttons.append(InlineKeyboardButton(f"{checkbox} {nome[0]}", callback_data=f"toggle_{cod_usina}"))
+                    await cursor.execute("SELECT cod_usina, ativo FROM machine_learning.usinas_usuario WHERE cod_usuario = %s", (cod_usuario,))
+                    usinas = await cursor.fetchall()
 
-                    # Montar o teclado inline
-                    keyboard = InlineKeyboardMarkup(row_width=1)
-                    keyboard.add(*buttons)
-                    
-                    # Verificar se a mensagem já foi enviada anteriormente
-                    user_data = await state.get_data()
-                    if 'edit_usinas_message_id' in user_data:
-                        try:
-                            # Tenta editar a mensagem anterior
-                            await bot.edit_message_text(chat_id=chat_id, message_id=user_data['edit_usinas_message_id'], text="Escolha uma usina para alternar:", reply_markup=keyboard)
-                        except:
-                            # Se a edição falhar, envia uma nova mensagem
-                            sent_message = await bot.send_message(chat_id, "Escolha uma usina para alternar:", reply_markup=keyboard)
-                            # Armazenar o ID da nova mensagem no FSMContext
-                            await state.update_data(edit_usinas_message_id=sent_message.message_id)
-                    else:
-                        # Enviar a mensagem e armazenar o ID da mensagem no FSMContext
+                    if usinas:
+                        buttons = []
+                        for cod_usina, ativo in usinas:
+                            await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                            nome = await cursor.fetchone()
+                            if nome:
+                                checkbox = "✅" if ativo else "⬜"
+                                async with state.proxy() as data:
+                                    data['user_selections'][cod_usina] = ativo
+                                buttons.append(InlineKeyboardButton(f"{checkbox} {nome[0]}", callback_data=f"toggle_{cod_usina}"))
+
+                        keyboard = InlineKeyboardMarkup(row_width=1)
+                        keyboard.add(*buttons)
+                        
+                        user_data = await state.get_data()
+                        if 'edit_usinas_message_id' in user_data:
+                            try:
+                                await bot.delete_message(chat_id, user_data['edit_usinas_message_id'])
+                            except Exception as e:
+                                print(f"Erro ao apagar a mensagem anterior: {e}")
+                                
+                        await bot.delete_message(chat_id=chat_id, message_id=callback_query.message.message_id)
                         sent_message = await bot.send_message(chat_id, "Escolha uma usina para alternar:", reply_markup=keyboard)
                         await state.update_data(edit_usinas_message_id=sent_message.message_id)
+                    else:
+                        await bot.send_message(chat_id, "Nenhuma usina encontrada para este usuário.")
                 else:
-                    await bot.send_message(chat_id, "Nenhuma usina encontrada para este usuário.")
-            else:
-                await bot.send_message(chat_id, "Usuário não encontrado.")
+                    await bot.send_message(chat_id, "Usuário não encontrado.")
 
-    await state.finish()
+    except Exception as e:
+        print(f"Ocorreu um erro ao processar a solicitação 1: {e}")
+    #    await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
+    finally:
+        await state.finish()
 
 
-# Handler para alternar o estado do checkbox de uma usina
 @dp.callback_query_handler(lambda c: c.data.startswith('toggle_'))
 async def toggle_usina_state(callback_query: types.CallbackQuery, state: FSMContext):
     chat_id = callback_query.message.chat.id
@@ -4184,69 +4071,112 @@ async def toggle_usina_state(callback_query: types.CallbackQuery, state: FSMCont
     data = callback_query.data.split('_')
     cod_usina = data[1]
 
+    try:
+        pool = dp.pool  # Use o pool já existente no dispatcher
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                result = await cursor.fetchone()
+
+                if result:
+                    cod_usuario = result[0]
+                    user_data = await state.get_data()
+                    if 'selections' not in user_data:
+                        user_data['selections'] = {}
+                    if cod_usuario not in user_data['selections']:
+                        user_data['selections'][cod_usuario] = {}
+
+                    keyboard = callback_query.message.reply_markup.inline_keyboard
+
+                    for row in keyboard:
+                        for button in row:
+                            if button.callback_data == f"toggle_{cod_usina}":
+                                if "⬜" in button.text:
+                                    button.text = button.text.replace("⬜", "✅")
+                                    user_data['selections'][cod_usuario][cod_usina] = 1
+                                else:
+                                    button.text = button.text.replace("✅", "⬜")
+                                    user_data['selections'][cod_usuario][cod_usina] = 0
+
+                    await state.update_data(selections=user_data['selections'])
+                    try:
+                        await bot.edit_message_reply_markup(chat_id, message_id, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+                    except MessageNotModified:
+                        pass
+
+                    await asyncio.sleep(60)
+
+                    user_data = await state.get_data()
+                    if cod_usuario in user_data['selections']:
+                        for usina, ativo in user_data['selections'][cod_usuario].items():
+                            await cursor.execute("""
+                                UPDATE machine_learning.usinas_usuario
+                                SET ativo = %s
+                                WHERE cod_usuario = %s AND cod_usina = %s
+                            """, (ativo, cod_usuario, usina))
+                        await conn.commit()
+
+                    try:
+                        await bot.delete_message(chat_id, message_id)
+                    except MessageToDeleteNotFound:
+                        pass
+
+                    await state.finish()
+
+    except Exception as e:
+        print(f"Ocorreu um erro ao processar a solicitação 2: {e}")
+    #    await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
+
+
+@dp.callback_query_handler(lambda c: c.data == '6')
+async def toggle_notificacoes(callback_query: types.CallbackQuery, state: FSMContext):
+    chat_id = callback_query.message.chat.id
     pool = await create_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            # Obter o cod_usuario da tabela usuarios_telegram
-            await cursor.execute("SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
-            result = await cursor.fetchone()
 
-            if result:
-                cod_usuario = result[0]
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Filtrar o usuário com base no id_telegram
+                await cursor.execute("SELECT todos_modelo_funcionamento FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                resultado = await cursor.fetchone()
 
-                # Verificar se as seleções já estão armazenadas no estado do FSMContext
-                user_data = await state.get_data()
-                if 'selections' not in user_data:
-                    user_data['selections'] = {}
-                if cod_usuario not in user_data['selections']:
-                    user_data['selections'][cod_usuario] = {}
-                
-                # Obter a mensagem atual e teclado inline
-                keyboard = callback_query.message.reply_markup.inline_keyboard
-                
-                # Iterar sobre os botões para encontrar o que foi clicado
-                for row in keyboard:
-                    for button in row:
-                        if button.callback_data == f"toggle_{cod_usina}":
-                            # Alternar o estado do checkbox
-                            if "⬜" in button.text:
-                                button.text = button.text.replace("⬜", "✅")
-                                user_data['selections'][cod_usuario][cod_usina] = 1
-                            else:
-                                button.text = button.text.replace("✅", "⬜")
-                                user_data['selections'][cod_usuario][cod_usina] = 0
-                
-                # Atualizar as seleções no estado do FSMContext
-                await state.update_data(selections=user_data['selections'])
-                
-                # Atualizar a mensagem existente com o novo estado do teclado
-                try:
-                    await bot.edit_message_reply_markup(chat_id, message_id, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
-                except MessageNotModified:
-                    pass
+                if resultado is not None:
+                    todos_modelo_funcionamento = resultado[0]
+                    
+                    # Inverter o valor de todos_modelo_funcionamento
+                    novo_valor = 0 if todos_modelo_funcionamento == 1 else 1
 
-                # Iniciar temporizador de 1 minuto após a última interação
-                await sleep(60)
-                
-                # Após o tempo de inatividade, gravar no banco de dados
-                user_data = await state.get_data()
-                if cod_usuario in user_data['selections']:
-                    for usina, ativo in user_data['selections'][cod_usuario].items():
-                        await cursor.execute("""
-                            UPDATE machine_learning.usinas_usuario
-                            SET ativo = %s
-                            WHERE cod_usuario = %s AND cod_usina = %s
-                        """, (ativo, cod_usuario, usina))
+                    # Atualizar o valor no banco de dados
+                    await cursor.execute("""
+                        UPDATE machine_learning.usuarios_telegram
+                        SET todos_modelo_funcionamento = %s
+                        WHERE id_telegram = %s
+                    """, (novo_valor, chat_id))
                     await conn.commit()
 
-                # Apagar a mensagem para o usuário
-                try:
-                    await bot.delete_message(chat_id, message_id)
-                except MessageToDeleteNotFound:
-                    pass
+                    # Construir a mensagem de resposta com base no novo valor
+                    if novo_valor == 1:
+                        status = "ativadas"
+                        detalhe = "O usuário escolheu receber as mensagens de alerta 80% e 100% do load speed."
+                    else:
+                        status = "desativadas"
+                        detalhe = "O usuário escolheu limitar as mensagens de alerta 80% e 100% do load speed."
 
-                # Remover o registro das seleções temporárias após a atualização
-                await state.finish()
+                    mensagem_final = f"Notificações {status} com sucesso.\n{detalhe}"
+
+                    # Apagar a mensagem dos botões
+                    await bot.delete_message(chat_id=chat_id, message_id=callback_query.message.message_id)
+
+                    # Enviar a mensagem final
+                    await bot.send_message(chat_id, mensagem_final)
+
+                else:
+                    await bot.answer_callback_query(callback_query.id, "Usuário não encontrado.")
+    except Exception as e:
+        print(f"Ocorreu um erro ao processar a notificação: {e}")
+        await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
+
+
 
 
 
@@ -4571,12 +4501,12 @@ async def enviar_boas_vindas(message: types.Message):
                             await cursor.execute("INSERT INTO machine_learning.usuarios_telegram (usuario, nome_supervisorio, nome_telegram, id_telegram, primeiro_acesso, cod_usuario, ativo) VALUES (%s, %s, %s, %s, %s, %s, 1)",
                                                 ('Grupo', 'Grupo Telegram', message.chat.title, chat_id, '1', '0'))
                             teclado_menu = await criar_menu()
-                            await message.reply("Grupo salvo com sucesso!\nUse o botão /menu abaixo para acessar o menu.", reply_markup=teclado_menu)
+                            await message.reply("Grupo salvo com sucesso!\nUse o botão Menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
                         else:
                             await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, nome_telegram = %s, ativo = 1 WHERE id_telegram = %s",
                                                 ('Grupo', 'Grupo Telegram', message.chat.title, chat_id))
                             teclado_menu = await criar_menu()
-                            await message.reply("Grupo atualizado com sucesso!\nUse o botão /menu abaixo para acessar o menu.", reply_markup=teclado_menu)
+                            await message.reply("Grupo atualizado com sucesso!\nUse o botão Menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
                         await conn.commit()
                     else:
                         await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
@@ -4594,11 +4524,11 @@ async def enviar_boas_vindas(message: types.Message):
                         await cursor.execute("INSERT INTO machine_learning.usuarios_telegram (usuario, nome_supervisorio, nome_telegram, id_telegram, primeiro_acesso, cod_usuario, ativo) VALUES (%s, %s, %s, %s, %s, %s, 1)",
                                             ('Grupo', 'Grupo Telegram', message.chat.title, chat_id, '1', '0'))
                         await conn.commit()
-                        await message.reply("Grupo salvo com sucesso!\nDigite /menu para opções")
+                        await message.reply("Grupo salvo com sucesso!\nDigite Menu para opções")
                     else:
                         await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, nome_telegram = %s, ativo = 1 WHERE id_telegram = %s",
                                             ('Grupo', 'Grupo Telegram', message.chat.title, chat_id))
-                        await message.reply("Grupo atualizado com sucesso!\nDigite /menu para opções")
+                        await message.reply("Grupo atualizado com sucesso!\nDigite Menu para opções")
                     await conn.commit()
                 else:
                     await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
@@ -4762,7 +4692,7 @@ async def save_username(message: types.Message):
                                 await conn.commit()
                                 await message.reply("Usuário atualizado com sucesso!")
                             else:
-                                await message.reply("Você não pode editar o usuário aqui, se quiser editar, digite /menu!")
+                                await message.reply("Você não pode editar o usuário aqui, se quiser editar, digite Menu!")
 
                     else:
                         query = "INSERT INTO machine_learning.usuarios_telegram (usuario, nome_telegram, nome_supervisorio, id_telegram, ativo) VALUES (%s, %s, %s, %s, %s)"
@@ -4772,7 +4702,7 @@ async def save_username(message: types.Message):
                         await message.reply("Nome do usuário não encontrado, enviado para a administração!")
                         id_grupo = await id_chat_grupo(pool)
                         print(id_grupo)
-                        await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite /menu e insira manualmente')
+                        await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite Menu e insira manualmente')
 
     except Exception as e:
         print(f"Erro ao salvar o nome de usuário: {e}")
@@ -4789,10 +4719,14 @@ async def verificar_e_obter_coeficiente(cod_equipamento, pool):
                 resultado = await cursor.fetchone()
                 if resultado is not None:
                     coeficiente_existente, intercepto_existente = resultado
+                else:
+                    return None, None  # Retorna None se o equipamento não estiver na tabela
+
         return coeficiente_existente, intercepto_existente
     except Exception as e:
         print(f"An error occurred in verificar_e_obter_coeficiente: {e}")
-        return 0.0, 0.0
+    #    return 0.0, 0.0
+        return None, None  # Retorna None em caso de erro
 
 
 async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado, pool):
@@ -4820,6 +4754,12 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
         #    if data_cadastro is not None or (agora - data_cadastro <= timedelta(hours=1)):
 
             coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento_resultado, pool)
+
+            # Adiciona filtro para não processar equipamentos sem coeficiente
+            if coeficiente_existente is None or intercepto_existente is None:
+            #    print(f"Equipamento {cod_equipamento_resultado} não encontrado na tabela coeficiente_geradores.")
+                return False, False, False  # Ou qualquer outra lógica de tratamento que você prefira
+
 
             if valores_atuais is not None:
                 previsoes = [(valor * coeficiente_existente + intercepto_existente) for valor in valores_atuais]
@@ -4912,14 +4852,13 @@ async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equ
     agora = datetime.now()
 
     if data_cadastro is not None and (agora - data_cadastro[0] <= timedelta(days=1)):
-#    if data_cadastro is not None or (agora - data_cadastro[0] <= timedelta(days=1)):
         coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento_resultado, pool)
 
         if valores_atuais is not None:
             previsoes = [(valor * coeficiente_existente + intercepto_existente) for valor in valores_atuais]
         else:
             previsoes = []
-            
+
         previsoes = [round(valor, 1) for valor in previsoes]
 
         async with pool.acquire() as conn:
@@ -4932,7 +4871,11 @@ async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equ
 
         if valores_atuais_3 is None or 0 in valores_atuais_3:
             return previsoes, False
-        
+
+        # Verificar se valores_atuais_114 não é None antes de iterar
+        if valores_atuais_114 is None:
+            return previsoes, False
+
         limite_mais = 16
         limite_menos = -16
 
@@ -4949,12 +4892,12 @@ async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equ
             calculo = round(valor - previsoes[i], 2)
 
             if calculo < limite_menos:
-                contagem_abaixo_do_limite +=1
-                print(cod_equipamento_resultado,'         ABAIXO', ' ',i,'  valor',valor,'     previsoes',previsoes[i], '     calculo =',calculo, '     limite_menos', limite_menos, '     contagem_abaixo_do_limite', contagem_abaixo_do_limite)
+                contagem_abaixo_do_limite += 1
+                print(cod_equipamento_resultado, 'ABAIXO', i, 'valor', valor, 'previsoes', previsoes[i], 'calculo =', calculo, 'limite_menos', limite_menos, 'contagem_abaixo_do_limite', contagem_abaixo_do_limite)
 
             elif abs(calculo) > limite_mais:
                 contagem_acima_do_limite += 1
-                print(cod_equipamento_resultado,'         ACIMA', ' ',i,'  valor',valor,'     previsoes',previsoes[i], '     calculo =',calculo, '     limite_mais', limite_mais, '     contagem_acima_do_limite', contagem_acima_do_limite)
+                print(cod_equipamento_resultado, 'ACIMA', i, 'valor', valor, 'previsoes', previsoes[i], 'calculo =', calculo, 'limite_mais', limite_mais, 'contagem_acima_do_limite', contagem_acima_do_limite)
 
         return previsoes, contagem_acima_do_limite > contagem_limites or contagem_abaixo_do_limite > contagem_limites
 
@@ -4968,9 +4911,10 @@ async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equ
                 """, (int(cod_equipamento_resultado),))
                 await conn.commit()
 
-        print('mais de uma hora, setando para 0 o alerta')
+        print('Mais de uma hora, setando para 0 o alerta', cod_equipamento_resultado)
 
         return 'NOT UPDATED BRO', False
+
 
 
 async def fazer_previsao(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado, pool):
@@ -5066,53 +5010,49 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
         for cod_equipamento in cod_equipamentos:
             valores = {cod: [0, 0, 0, 0, 0] for cod in cod_campo_especificados}
             try:
-                async with pool.acquire() as conn:  # Use o pool de conexões para adquirir uma conexão
+                async with pool.acquire() as conn:
                     async with conn.cursor() as cursor:
-                        query = f"SELECT data_cadastro, valor, cod_campo FROM {tabelas} WHERE cod_equipamento = {cod_equipamento} AND cod_campo IN ({', '.join(cod_campo_especificados)})"
-                        await cursor.execute(query)
+                        query = f"""
+                        SELECT data_cadastro, valor, cod_campo 
+                        FROM {tabelas} 
+                        WHERE cod_equipamento = %s 
+                        AND cod_campo IN ({', '.join(cod_campo_especificados)})
+                        """
+                        await cursor.execute(query, (cod_equipamento,))
                         resultados = await cursor.fetchall()
 
                         df = pd.DataFrame(resultados, columns=['data_cadastro', 'valor', 'cod_campo'])
-
                         df['data_cadastro'] = pd.to_datetime(df['data_cadastro'])
-
                         df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
 
                         for cod in cod_campo_especificados:
                             valores_cod_campo = df[df['cod_campo'] == int(cod)]['valor'].values
                             valores[cod] = list(valores_cod_campo[-5:])[::-1] + valores[cod][:5-len(valores_cod_campo[-5:])]
 
-                            await cursor.execute(f"SELECT data_cadastro FROM {tabelas} WHERE cod_equipamento = {cod_equipamento} AND cod_campo = {cod}")
+                            await cursor.execute(f"SELECT data_cadastro FROM {tabelas} WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
                             data_cadastro_leituras = await cursor.fetchone()
-                            if data_cadastro_leituras is not None:
-                                data_cadastro_leituras = data_cadastro_leituras[0]
-                                data_cadastro_formatada_leituras = data_cadastro_leituras.strftime('%Y-%m-%d %H:%M:%S')
+                            if data_cadastro_leituras:
+                                data_cadastro_formatada_leituras = data_cadastro_leituras[0].strftime('%Y-%m-%d %H:%M:%S')
 
-                                await cursor.execute(f"SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = {cod_equipamento} AND cod_campo = {cod}")
+                                await cursor.execute(f"SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
                                 data_cadastro_consecutivas = await cursor.fetchone()
-                                if data_cadastro_consecutivas is not None:
-                                    data_cadastro_consecutivas = data_cadastro_consecutivas[0]
-                                    data_cadastro_formatada_consecutivas = data_cadastro_consecutivas.strftime('%Y-%m-%d %H:%M:%S')
-                                else:
-                                    await cursor.execute(f"SELECT data_cadastro FROM {tabelas} WHERE cod_equipamento = {cod_equipamento} AND cod_campo = {cod}")
-                                    data_cadastro_formatada_consecutivas = await cursor.fetchone()
-                                    if data_cadastro_formatada_consecutivas:
-                                        data_cadastro_formatada_consecutivas = data_cadastro_formatada_consecutivas[0]
-                                        data_cadastro_formatada_consecutivas = data_cadastro_formatada_consecutivas.strftime('%Y-%m-%d %H:%M:%S')
+                                data_cadastro_formatada_consecutivas = data_cadastro_consecutivas[0].strftime('%Y-%m-%d %H:%M:%S') if data_cadastro_consecutivas else data_cadastro_formatada_leituras
 
                                 if data_cadastro_formatada_leituras != data_cadastro_formatada_consecutivas:
                                     await cursor.execute(f"""
-                                    INSERT INTO machine_learning.leituras_consecutivas (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
-                                    VALUES ({cod_equipamento}, {cod}, {valores[cod][4]}, {valores[cod][3]}, {valores[cod][2]}, {valores[cod][1]}, {valores[cod][0]}, '{data_cadastro_formatada_leituras}')
+                                    INSERT INTO machine_learning.leituras_consecutivas 
+                                    (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                     ON DUPLICATE KEY UPDATE
                                     valor_1 = machine_learning.leituras_consecutivas.valor_2,
                                     valor_2 = machine_learning.leituras_consecutivas.valor_3,
                                     valor_3 = machine_learning.leituras_consecutivas.valor_4,
                                     valor_4 = machine_learning.leituras_consecutivas.valor_5,
-                                    valor_5 = {valores[cod][0]},
-                                    data_cadastro = '{data_cadastro_formatada_leituras}'
-                                    """)
+                                    valor_5 = VALUES(valor_5),
+                                    data_cadastro = VALUES(data_cadastro)
+                                    """, (cod_equipamento, cod, *valores[cod][::-1], data_cadastro_formatada_leituras))
                                     await conn.commit()
+
             except Exception as e:
                 print(f"Erro ao processar o equipamento {cod_equipamento}: {str(e)}")
                 
@@ -5124,6 +5064,7 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
                     raise
 
         await asyncio.sleep(120)
+
 
 sem_mensagem_silenciado = set()
 
@@ -5173,337 +5114,18 @@ async def verificar_e_excluir_linhas_expiradas(pool):
         await asyncio.sleep(50)
 
 
-codigo_de_alarmes_desejados = set([1, 243, 244, 253, 256, 259, 262,265,269,272,273,279,280,281,301,304,350, 351, 352, 353, 356, 357, 381, 383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405,411,412,413,414,415,416, 471, 472, 473,528, 590, 591, 592, 593, 594,595,596,597,598,599,600, 602, 603, 604, 611,615,616,617,631, 635, 637, 638, 657, 658,669,678, 725, 727, 728, 729, 730, 731, 732, 735])
+codigo_de_alarmes_desejados = set([
+    1, 243, 244, 253, 256, 259, 262, 265, 269, 272, 273, 279, 280, 281, 301, 304, 350, 351, 352, 353, 356, 357, 381,
+    383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405, 411, 412, 413, 414, 415, 416, 471, 472, 473, 528, 590,
+    591, 592, 593, 594, 595, 596, 597, 598, 599, 600, 602, 603, 604, 611, 615, 616, 617, 631, 635, 637, 638, 657, 658,
+    669, 678, 725, 727, 728, 729, 730, 731, 732, 735
+])
+
 ultimos_alertas = {}
 alertas_enviados_previsao = set()
 hora_media_alerta_1 = {}  # Dicionário para mapear o código do equipamento para a hora do alerta igual a 1
 hora_media_alerta_saida = {}  # Dicionário para mapear o código do equipamento para a hora do alerta igual a 1
 
-'''
-async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool):
-    usuarios_bloqueados = set()
-    alertas_enviados_acima = set()
-    ultimos_alertas = {}
-    hora_media_alerta_1 = {}
-
-    while True:
-        alertas_por_usina = {}
-        nomes_usuarios = []
-
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                for cod_equipamento in cod_equipamentos:
-                                        
-                    await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(cod_equipamento),))
-                    valores_atuais_114 = await cursor.fetchone()
-
-                    if valores_atuais_114 is None:
-                        continue
-
-                    await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
-                    valores_atuais = await cursor.fetchone()
-                    
-                    if valores_atuais is None:
-                        continue
-                    
-                    await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
-                    result = await cursor.fetchone()
-
-                    if result is None:
-                        continue
-
-                    valores_atuais_114 = result[:-1]
-                    data_cadastro_consecutivas = result[-1]
-                    
-                    await cursor.execute("SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1", (int(cod_equipamento),))
-                    result = await cursor.fetchone()
-                    
-                    if result is not None:
-                        data_cadastro_leituras = result[0]
-                    else:
-                        continue
-
-                    if data_cadastro_leituras == data_cadastro_consecutivas:
-                        continue
-
-                    agora = datetime.now()
-
-                    if agora - data_cadastro_consecutivas > timedelta(hours=1):
-                        continue
-
-
-                    coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
-                    previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
-                    
-                    if cod_equipamento not in ultimos_alertas:
-                        ultimos_alertas[cod_equipamento] = []
-                    ultimos_alertas[cod_equipamento].append(int(alerta_abaixo or alerta_acima))
-                    if len(ultimos_alertas[cod_equipamento]) > 5:
-                        ultimos_alertas[cod_equipamento].pop(0)
-
-                    if len(ultimos_alertas[cod_equipamento]) == 5:
-                        media_alerta = sum(ultimos_alertas[cod_equipamento]) / len(ultimos_alertas[cod_equipamento])
-                           
-                        if media_alerta == 1:
-                            await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
-                            valores_atuais = await cursor.fetchone()
-
-                            coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
-                            previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
-
-                            await cursor.execute("""
-                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
-                            """, (cod_equipamento,))
-                            alarmes_ativos = await cursor.fetchall()
-
-                            valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                            valores_previstos_str = ', '.join(map(str, previsoes))
-                            alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
-
-                            if cod_equipamento not in hora_media_alerta_1:
-                                hora_media_alerta_1[cod_equipamento] = datetime.now()
-                            #    print(cod_equipamento, 'entrou em alerta e nao tem a hora, escrevendo a hora, veja se parou de escrever na tabela valores zerados')
-                                await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                result = await cursor.fetchone()
-                                if result is not None:
-                                    nome, cod_usina, cod_usuario = result
-
-                                    await cursor.execute("""
-                                        INSERT INTO machine_learning.valores_previsao 
-                                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
-                                    """, (cod_equipamento, cod_usina, hora_media_alerta_1[cod_equipamento], valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                                    await conn.commit()
-
-                            elif cod_equipamento in hora_media_alerta_1:
-                                hora_previsao = hora_media_alerta_1[cod_equipamento]
-                            #    print(cod_equipamento, 'entrou em alerta e ja tem a data alerta, veja se parou de escrever na tabela valores zerados')
-                                await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                result = await cursor.fetchone()
-                                if result is not None:
-                                    nome, cod_usina, cod_usuario = result
-                                    await cursor.execute("""
-                                        INSERT INTO machine_learning.valores_previsao 
-                                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
-                                    """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                                    await conn.commit()
-                                
-                            if cod_equipamento not in alertas_enviados_previsao:
-
-                                valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                                valores_previstos_str = ', '.join(map(str, previsoes))
-                                equipamentos_str = f'\n\nValores Atuais:       {valores_atuais_str} \nValores Previstos:  {valores_previstos_str}'
-                                
-                                mensagem = ''
-                                mensagem_grupo = ''
-                                if alerta_abaixo:
-                                    await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                    result = await cursor.fetchone()
-                                    if result is not None:
-                                        nome, cod_usina, cod_usuario = result
-                                        mensagem = f"({nome}) - Load Speed abaixo do previsto {equipamentos_str}\n\n"
-                                        mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed abaixo do previsto\n\n"
-        
-                                elif alerta_acima:
-                                    await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                    result = await cursor.fetchone()
-                                    if result is not None:
-                                        nome, cod_usina, cod_usuario = result
-                                        mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
-                                        mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
-            
-                                if cod_usina not in alertas_por_usina:
-                                    alertas_por_usina[cod_usina] = []
-                                alertas_por_usina[cod_usina].append(mensagem)
-                                alertas_por_usina[cod_usina].append(mensagem_grupo)
-
-                                
-                                alertas_enviados_previsao.add(cod_equipamento)
-            
-                                await cursor.execute("""
-                                UPDATE machine_learning.leituras_consecutivas
-                                SET alerta = 1
-                                WHERE cod_equipamento = %s
-                                """, (int(cod_equipamento),))
-                                await conn.commit()
-
-                                print('alerta de previsao adicionado',cod_equipamento)
-
-                        elif media_alerta == 0 and cod_equipamento in alertas_enviados_previsao:
-                            print('valores 114 previsao depois com',valores_atuais_114)
-
-                            await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
-                            valores_atuais = await cursor.fetchone()
-                                
-                            coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
-                            previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
-
-                            await cursor.execute("""
-                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
-                            """, (cod_equipamento,))
-                            alarmes_ativos = await cursor.fetchall()
-                        #    print('alarmes ativos previsao', cod_equipamento ,valores_atuais_114)
-
-                            valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                            valores_previstos_str = ', '.join(map(str, previsoes))
-                            alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
-
-                            hora_previsao = hora_media_alerta_1[cod_equipamento]
-                            await cursor.execute("""
-                                INSERT INTO machine_learning.valores_previsao 
-                                (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                                VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
-                            """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                            await conn.commit()
-
-                            if cod_equipamento not in hora_media_alerta_saida: 
-                                hora_media_alerta_saida[cod_equipamento] = datetime.now()
-                                await cursor.execute("""
-                                    SELECT data_cadastro_previsto, data_cadastro_quebra 
-                                    FROM machine_learning.relatorio_quebras 
-                                    WHERE cod_equipamento = %s
-                                    ORDER BY id DESC 
-                                    LIMIT 1
-                                """, (cod_equipamento,))
-                                data_cadastro_previsto, data_cadastro_quebra = await cursor.fetchone()
-                            #    print(cod_equipamento,'escrevendo na coluna data_cadastro_previsto_saida ')
-
-                                if data_cadastro_quebra is None:
-                            #        print(cod_equipamento,' - data_cadastro_quebra e none',data_cadastro_quebra,'data_cadastro_previsto',data_cadastro_previsto)
-
-                                    await cursor.execute("""
-                                        UPDATE machine_learning.relatorio_quebras SET data_cadastro_previsto_saida = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
-                                    """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
-                                    await conn.commit()
-
-                                    await cursor.execute("""
-                                        UPDATE machine_learning.log_relatorio_quebras SET data_cadastro_previsto_saida = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
-                                    """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
-                                    await conn.commit()
-                                else:
-                                    pass
-
-                            if all(value == 0 for value in valores_atuais_114[:-1]):
-                                print(cod_equipamento,'alerta removido, alerta em 0 de previsao, zerou valores',all(value == 0 for value in valores_atuais_114[:-1]))
-                                print(cod_equipamento,' valores 114 depois com ',valores_atuais_114)
-
-                                await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
-                                valores_atuais = await cursor.fetchone()
-
-                                coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
-                                previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
-
-                                await cursor.execute("""
-                                    SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
-                                """, (cod_equipamento,))
-                                alarmes_ativos = await cursor.fetchall()
-                                print('alarmes_ativos para previsao',alarmes_ativos)
-
-                                valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                                valores_previstos_str = ', '.join(map(str, previsoes))
-                                alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
-                                
-                                hora_previsao = hora_media_alerta_1[cod_equipamento]
-
-                                await cursor.execute("""
-                                    INSERT INTO machine_learning.valores_previsao 
-                                    (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                                    VALUES (%s, %s, NOW(), %s, NOW(), 1, %s, %s, %s)
-                                """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                                await conn.commit()
-
-                                await cursor.execute("""
-                                UPDATE machine_learning.leituras_consecutivas
-                                SET alerta = 0
-                                WHERE cod_equipamento = %s
-                                """, (int(cod_equipamento),))
-                                await conn.commit()
-                                print('escrevendo na coluna alerta 0 para previsao')
-
-                                await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                result = await cursor.fetchone()
-                                
-                                print('result para enviar nome da usina do alerta previsao',result)
-                                
-                                # if result is not None:
-                                #     nome, cod_usina, cod_usuario = result
-                                #     mensagem_previsao = f'🟢 Usina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg]) + '\n\nAlerta de previsao removido'
-                                #     print('mensagem_previsao',mensagem_previsao)
-                                #     id_grupo = await id_chat_grupo(pool)          
-                                #     await bot.send_message(id_grupo, mensagem_previsao, parse_mode='HTML')
-
-                                hora_previsao = hora_media_alerta_1.pop(cod_equipamento, None)
-                                alertas_enviados_previsao.remove(cod_equipamento)
-                                
-                                nomes_usuarios.clear()
-                                
-                                print('alerta removido de previsao',cod_equipamento)
-
-                for cod_usina, mensagens in alertas_por_usina.items():
-                    await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                    nome_usina = (await cursor.fetchone())[0]
-
-                    if nome_usina is None:
-                        continue
-
-                    await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                    cod_usuarios = await cursor.fetchall()
-
-                    if cod_usuarios is None:
-                        continue
-
-                    for cod_usuario_tuple in cod_usuarios:
-                        cod_usuario = cod_usuario_tuple[0]
-                        if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
-                            await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                            result = await cursor.fetchone()
-                            if result is not None:
-                                id_telegram, nome_usuario, ativo = result
-                                if ativo == 1:
-                                    try:
-                                        nomes_usuarios.append(nome_usuario)
-                                        botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
-                                        botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
-        
-                                        keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
-        
-                                        mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
-        
-                                        if cod_usuario in usuarios_bloqueados:
-                                            usuarios_bloqueados.remove(cod_usuario)
-                                            id_grupo = await id_chat_grupo(pool)
-                                            if id_grupo is not None:
-                                                await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
-                                            await conn.commit()
-                                                                                                            
-                                    except BotBlocked:
-                                        if cod_usuario not in usuarios_bloqueados:
-                                            usuarios_bloqueados.add(cod_usuario)
-                                            id_grupo = await id_chat_grupo(pool)
-                                            if id_grupo is not None:
-                                                await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
-                                            await conn.commit()
-
-                            else:
-                                continue
-                            
-                    nomes_usuarios_str = ', '.join(nomes_usuarios)
-                    id_grupo = await id_chat_grupo(pool)
-                    mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
-                    nomes_usuarios.clear()
-
-                    sys.stdout.flush()
-
-        await asyncio.sleep(10)
-#        await asyncio.sleep(300)
-
-'''
-
 
 async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     usuarios_bloqueados = set()
@@ -5515,10 +5137,10 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
         alertas_por_usina = {}
         nomes_usuarios = []
 
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                for cod_equipamento in cod_equipamentos:
-                    try:
+        for cod_equipamento in cod_equipamentos:
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(cod_equipamento),))
                         valores_atuais_114 = await cursor.fetchone()
 
@@ -5530,7 +5152,14 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         
                         if valores_atuais is None:
                             continue
-                        
+
+                        # Calculando a média dos valores
+                        media_valores_114 = sum(valores_atuais_114) / len(valores_atuais_114)
+
+                        # Verificando se a média é menor que 50, se for, continue para a próxima iteração
+                    #    if media_valores_114 < 50:
+                    #        continue
+
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
                         result = await cursor.fetchone()
 
@@ -5565,10 +5194,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         ultimos_alertas[cod_equipamento].append(int(alerta_abaixo or alerta_acima))
                         if len(ultimos_alertas[cod_equipamento]) > 5:
                             ultimos_alertas[cod_equipamento].pop(0)
+                        
+                    #    print('\ncod_equipamento ',cod_equipamento,' ultimos_alertas previsao ',ultimos_alertas[cod_equipamento],'\n valores_atuais_114 ',valores_atuais_114,'\n previsoes ',previsoes)
 
                         if len(ultimos_alertas[cod_equipamento]) == 5:
                             media_alerta = sum(ultimos_alertas[cod_equipamento]) / len(ultimos_alertas[cod_equipamento])
-                            
                             if media_alerta == 1:
                                 await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
                                 valores_atuais = await cursor.fetchone()
@@ -5637,7 +5267,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                             nome, cod_usina, cod_usuario = result
                                             mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
                                             mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
-                
+
                                     if cod_usina not in alertas_por_usina:
                                         alertas_por_usina[cod_usina] = []
                                     alertas_por_usina[cod_usina].append(mensagem)
@@ -5764,75 +5394,433 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     
                                     print('alerta removido de previsao',cod_equipamento)
 
-                        await asyncio.sleep(10)
                     
-                    except Exception as e:
-                        print(f"Ocorreu um erro em enviar_previsao_valor_equipamento_alerta o equipamento {cod_equipamento}: {e}")
-                        
-                for cod_usina, mensagens in alertas_por_usina.items():
-                    await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                    nome_usina = (await cursor.fetchone())[0]
+            except Exception as e:
+                print(f"Ocorreu um erro em enviar_previsao_valor_equipamento_alerta o equipamento {cod_equipamento}:")
+                    
+                # for cod_usina, mensagens in alertas_por_usina.items():
+                #     await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                #     nome_usina = (await cursor.fetchone())[0]
 
-                    if nome_usina is None:
-                        continue
+                #     if nome_usina is None:
+                #         continue
 
-                    await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                    cod_usuarios = await cursor.fetchall()
+                #     await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
+                #     cod_usuarios = await cursor.fetchall()
 
-                    if cod_usuarios is None:
-                        continue
+                #     if cod_usuarios is None:
+                #         continue
 
-                    for cod_usuario_tuple in cod_usuarios:
-                        cod_usuario = cod_usuario_tuple[0]
-                        if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
-                            await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                            result = await cursor.fetchone()
-                            if result is not None:
-                                id_telegram, nome_usuario, ativo = result
-                                if ativo == 1:
-                                    try:
-                                        nomes_usuarios.append(nome_usuario)
-                                        botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
-                                        botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+                #     for cod_usuario_tuple in cod_usuarios:
+                #         cod_usuario = cod_usuario_tuple[0]
+                #         if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
+                #             await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                #             result = await cursor.fetchone()
+                #             if result is not None:
+                #                 id_telegram, nome_usuario, ativo = result
+                #                 if ativo == 1:
+                #                     try:
+                #                         nomes_usuarios.append(nome_usuario)
+                #                         botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                #                         botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
         
-                                        keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                #                         keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
         
-                                        mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                #                         mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+                #                         await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
         
-                                        if cod_usuario in usuarios_bloqueados:
-                                            usuarios_bloqueados.remove(cod_usuario)
-                                            id_grupo = await id_chat_grupo(pool)
-                                            if id_grupo is not None:
-                                                await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
-                                            await conn.commit()
+                #                         if cod_usuario in usuarios_bloqueados:
+                #                             usuarios_bloqueados.remove(cod_usuario)
+                #                             id_grupo = await id_chat_grupo(pool)
+                #                             if id_grupo is not None:
+                #                                 await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                #                             await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
+                #                             await conn.commit()
                                                                                                             
-                                    except BotBlocked:
-                                        if cod_usuario not in usuarios_bloqueados:
-                                            usuarios_bloqueados.add(cod_usuario)
-                                            id_grupo = await id_chat_grupo(pool)
-                                            if id_grupo is not None:
-                                                await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
-                                            await conn.commit()
+                #                     except BotBlocked:
+                #                         if cod_usuario not in usuarios_bloqueados:
+                #                             usuarios_bloqueados.add(cod_usuario)
+                #                             id_grupo = await id_chat_grupo(pool)
+                #                             if id_grupo is not None:
+                #                                 await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                #                             await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
+                #                             await conn.commit()
 
-                            else:
-                                continue
+                #             else:
+                #                 continue
                             
-                    nomes_usuarios_str = ', '.join(nomes_usuarios)
-                    id_grupo = await id_chat_grupo(pool)
-                    mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
-                    nomes_usuarios.clear()
+                #     nomes_usuarios_str = ', '.join(nomes_usuarios)
+                #     id_grupo = await id_chat_grupo(pool)
+                #     mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                #     await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                #     nomes_usuarios.clear()
 
-                    sys.stdout.flush()
+                #     sys.stdout.flush()
 
+
+        # Iterar sobre os alertas por usina, mas apenas se a média de valores_atuais_114 for >= 50
+        if media_valores_114 >= 50:
+            for cod_usina, mensagens in alertas_por_usina.items():
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        # Buscar o nome e o código do modelo de funcionamento da usina
+                        await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                        result = await cursor.fetchone()
+                        if result:
+                            nome_usina, cod_modelo_funcionamento = result
+                            print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento,' esta dentro do loop da previsao')
+
+                            # Buscar todos os cod_usuario associados à usina
+                            await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
+                            cod_usuarios = await cursor.fetchall()
+
+                            if cod_usuarios:
+                                nomes_usuarios = []
+
+                                for cod_usuario_tuple in cod_usuarios:
+                                    cod_usuario = cod_usuario_tuple[0]
+
+                                    # Verificar se o usuário não está silenciado
+                                    if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
+
+                                        # Verificar se a usina está ativa para o usuário
+                                        await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
+                                        usina_ativa_row = await cursor.fetchone()
+                                        print("(loop 1 'previsao') A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
+
+                                        if usina_ativa_row and usina_ativa_row[0] == 1:
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            result = await cursor.fetchone()
+                                            
+                                            if result:
+                                                id_telegram, nome_usuario, ativo = result
+                                                if ativo == 1:
+                                                    try:
+                                                        nomes_usuarios.append(nome_usuario)
+                                                        botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                                        botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+                        
+                                                        keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                        
+                                                        mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                        
+                                                        if cod_usuario in usuarios_bloqueados:
+                                                            usuarios_bloqueados.remove(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
+                                                                                                                            
+                                                    except BotBlocked:
+                                                        if cod_usuario not in usuarios_bloqueados:
+                                                            usuarios_bloqueados.add(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
+
+                                            else:
+                                                continue
+                                            
+                                nomes_usuarios_str = ', '.join(nomes_usuarios)
+                                id_grupo = await id_chat_grupo(pool)
+                                mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                                nomes_usuarios.clear()
+
+                                sys.stdout.flush()
 
         
 #        await asyncio.sleep(10)
-        await asyncio.sleep(300)
+        await asyncio.sleep(130)
 
+
+
+
+'''
+async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool):
+    usuarios_bloqueados = set()
+    alertas_enviados_previsao = set()
+    ultimos_alertas = defaultdict(list)
+    hora_media_alerta_1 = {}
+
+    while True:
+        nomes_usuarios = []
+        alertas_por_usina = {}
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # 1. Consulta única para obter todas as leituras e alarmes necessários
+                await cursor.execute("""
+                    SELECT lc.cod_equipamento, lc.cod_campo, lc.valor_1, lc.valor_2, lc.valor_3, lc.valor_4, lc.valor_5, lc.data_cadastro,
+                           la.cod_alarme, sg.nome, sg.cod_usina, sg.cod_usuario
+                    FROM machine_learning.leituras_consecutivas lc
+                    LEFT JOIN sup_geral.alarmes_ativos la ON lc.cod_equipamento = la.cod_equipamento
+                    LEFT JOIN sup_geral.equipamentos sg ON lc.cod_equipamento = sg.codigo
+                    WHERE lc.cod_equipamento IN %s
+                """, (tuple(cod_equipamentos),))
+                results = await cursor.fetchall()
+
+        # 2. Organizar os resultados em dicionários
+        leituras = defaultdict(list)
+        alarmes_ativos = defaultdict(list)
+        equipamentos_info = {}
+
+        for row in results:
+            cod_equipamento = row[0]
+            cod_campo = row[1]
+            valores = row[2:7]
+            data_cadastro = row[7]
+            cod_alarme = row[8]
+            nome = row[9]
+            cod_usina = row[10]
+            cod_usuario = row[11]
+
+            if cod_campo == 114:
+                leituras[cod_equipamento].append((valores, data_cadastro))
+            if cod_alarme:
+                alarmes_ativos[cod_equipamento].append(cod_alarme)
+            if cod_equipamento not in equipamentos_info:
+                equipamentos_info[cod_equipamento] = (nome, cod_usina, cod_usuario)
+
+        # 3. Processamento de cada equipamento
+        for cod_equipamento in cod_equipamentos:
+            valores_atuais_114, data_cadastro_consecutivas = next(iter(leituras.get(cod_equipamento, [])), (None, None))
+            if not valores_atuais_114:
+                continue
+
+            agora = datetime.now()
+
+            if agora - data_cadastro_consecutivas > timedelta(hours=1):
+                continue
+
+            coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento, pool)
+            previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(
+                valores_atuais_114, coeficiente_existente, intercepto_existente, cod_equipamento, pool)
+            
+
+            ultimos_alertas[cod_equipamento].append(int(alerta_abaixo or alerta_acima))
+            if len(ultimos_alertas[cod_equipamento]) > 5:
+                ultimos_alertas[cod_equipamento].pop(0)
+
+            if len(ultimos_alertas[cod_equipamento]) == 5:
+                media_alerta = sum(ultimos_alertas[cod_equipamento]) / len(ultimos_alertas[cod_equipamento])
+    
+                print('cod_equipamento ',cod_equipamento,'previsoes ',previsoes,'\nmedia_alerta',media_alerta)
+    
+                if media_alerta == 1:
+                    if cod_equipamento not in hora_media_alerta_1:
+                        hora_media_alerta_1[cod_equipamento] = datetime.now()
+
+                    valores_atuais_str = ', '.join(map(str, valores_atuais_114))
+                    valores_previstos_str = ', '.join(map(str, previsoes))
+                    alarmes_ativos_str = ', '.join(map(str, alarmes_ativos.get(cod_equipamento, [])))
+
+                    nome, cod_usina, cod_usuario = equipamentos_info[cod_equipamento]
+
+                    await cursor.execute("""
+                        INSERT INTO machine_learning.valores_previsao 
+                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
+                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
+                    """, (cod_equipamento, cod_usina, hora_media_alerta_1[cod_equipamento], valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+                    await conn.commit()
+
+                    if cod_equipamento not in alertas_enviados_previsao:
+                        equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {valores_previstos_str}'
+                        mensagem = ''
+                        mensagem_grupo = ''
+
+                        if alerta_abaixo:
+                            mensagem = f"({nome}) - Load Speed abaixo do previsto {equipamentos_str}\n\n"
+                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed abaixo do previsto\n\n"
+                        elif alerta_acima:
+                            mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
+                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
+
+                        if cod_usina not in alertas_por_usina:
+                            alertas_por_usina[cod_usina] = []
+                        alertas_por_usina[cod_usina].append(mensagem)
+                        alertas_por_usina[cod_usina].append(mensagem_grupo)
+
+                        alertas_enviados_previsao.add(cod_equipamento)
+
+                        await cursor.execute("""
+                            UPDATE machine_learning.leituras_consecutivas
+                            SET alerta = 1
+                            WHERE cod_equipamento = %s
+                        """, (cod_equipamento,))
+                        await conn.commit()
+
+                        print('Alerta de previsão adicionado:', cod_equipamento)
+
+                elif media_alerta == 0 and cod_equipamento in alertas_enviados_previsao:
+                    print('equipamento - ', cod_equipamento, ' em alerta 0, valores 114 previsao depois com', valores_atuais_114)
+
+                    # Recuperar valores atuais do equipamento
+                    await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
+                    valores_atuais = await cursor.fetchone()
+
+                    coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
+                    previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
+
+                    # Buscar alarmes ativos
+                    await cursor.execute("""
+                        SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                    """, (cod_equipamento,))
+                    alarmes_ativos = await cursor.fetchall()
+
+                    valores_atuais_str = ', '.join(map(str, valores_atuais_114))
+                    valores_previstos_str = ', '.join(map(str, previsoes))
+                    alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
+
+                    hora_previsao = hora_media_alerta_1[cod_equipamento]
+
+                    # Inserir previsão na tabela machine_learning.valores_previsao
+                    await cursor.execute("""
+                        INSERT INTO machine_learning.valores_previsao 
+                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
+                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
+                    """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+                    await conn.commit()
+
+                    if cod_equipamento not in hora_media_alerta_saida: 
+                        hora_media_alerta_saida[cod_equipamento] = datetime.now()
+                        
+                        # Verificar última quebra
+                        await cursor.execute("""
+                            SELECT data_cadastro_previsto, data_cadastro_quebra 
+                            FROM machine_learning.relatorio_quebras 
+                            WHERE cod_equipamento = %s
+                            ORDER BY id DESC 
+                            LIMIT 1
+                        """, (cod_equipamento,))
+                        data_cadastro_previsto, data_cadastro_quebra = await cursor.fetchone()
+
+                        # Atualizar data_cadastro_previsto_saida se não houver data_cadastro_quebra
+                        if data_cadastro_quebra is None:
+                            await cursor.execute("""
+                                UPDATE machine_learning.relatorio_quebras 
+                                SET data_cadastro_previsto_saida = %s 
+                                WHERE cod_equipamento = %s 
+                                ORDER BY data_cadastro_previsto DESC 
+                                LIMIT 1
+                            """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
+                            await conn.commit()
+
+                            await cursor.execute("""
+                                UPDATE machine_learning.log_relatorio_quebras 
+                                SET data_cadastro_previsto_saida = %s 
+                                WHERE cod_equipamento = %s 
+                                ORDER BY data_cadastro_previsto DESC 
+                                LIMIT 1
+                            """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
+                            await conn.commit()
+
+                    if all(value == 0 for value in valores_atuais_114[:-1]):
+                        print(cod_equipamento, 'alerta removido, alerta em 0 de previsao, zerou valores', all(value == 0 for value in valores_atuais_114[:-1]))
+
+                        # Atualizar previsão e zerar alerta
+                        await cursor.execute("""
+                            UPDATE machine_learning.leituras_consecutivas
+                            SET alerta = 0
+                            WHERE cod_equipamento = %s
+                        """, (int(cod_equipamento),))
+                        await conn.commit()
+                        print('escrevendo na coluna alerta 0 para previsao')
+
+                        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+                        result = await cursor.fetchone()
+
+                        print('result para enviar nome da usina do alerta previsao', result)
+
+                        # Limpar registros de alerta
+                        hora_previsao = hora_media_alerta_1.pop(cod_equipamento, None)
+                        alertas_enviados_previsao.remove(cod_equipamento)
+                        nomes_usuarios.clear()
+
+                        print('alerta removido de previsao', cod_equipamento)
+
+                    
+        for cod_usina, mensagens in alertas_por_usina.items():
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # Buscar o nome e o código do modelo de funcionamento da usina
+                    await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                    result = await cursor.fetchone()
+                    if result:
+                        nome_usina, cod_modelo_funcionamento = result
+                        print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento,' esta dentro do loop da previsao')
+
+                        # Buscar todos os cod_usuario associados à usina
+                        await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
+                        cod_usuarios = await cursor.fetchall()
+
+                        if cod_usuarios:
+                            nomes_usuarios = []
+
+                            for cod_usuario_tuple in cod_usuarios:
+                                cod_usuario = cod_usuario_tuple[0]
+
+                                # Verificar se o usuário não está silenciado
+                                if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
+
+                                    # Verificar se a usina está ativa para o usuário
+                                    await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
+                                    usina_ativa_row = await cursor.fetchone()
+                                    print("(loop 1 'previsao') A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
+
+                                    if usina_ativa_row and usina_ativa_row[0] == 1:
+                                        await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                        result = await cursor.fetchone()
+                                        
+                                        if result:
+                                            id_telegram, nome_usuario, ativo = result
+                                            if ativo == 1:
+                                                try:
+                                                    nomes_usuarios.append(nome_usuario)
+                                                    botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                                    botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+                    
+                                                    keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                    
+                                                    mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+                                                    await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                    
+                                                    if cod_usuario in usuarios_bloqueados:
+                                                        usuarios_bloqueados.remove(cod_usuario)
+                                                        id_grupo = await id_chat_grupo(pool)
+                                                        if id_grupo is not None:
+                                                            await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                        await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
+                                                        await conn.commit()
+                                                                                                                        
+                                                except BotBlocked:
+                                                    if cod_usuario not in usuarios_bloqueados:
+                                                        usuarios_bloqueados.add(cod_usuario)
+                                                        id_grupo = await id_chat_grupo(pool)
+                                                        if id_grupo is not None:
+                                                            await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                        await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
+                                                        await conn.commit()
+
+                                        else:
+                                            continue
+                                        
+                            nomes_usuarios_str = ', '.join(nomes_usuarios)
+                            id_grupo = await id_chat_grupo(pool)
+                            mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                            await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                            nomes_usuarios.clear()
+
+                            sys.stdout.flush()
+
+
+#        await asyncio.sleep(10)
+        await asyncio.sleep(190)
+
+'''
 
 
 
@@ -5842,6 +5830,8 @@ hora_media_alerta_1_80 = {}  # Dicionário para mapear o código do equipamento 
 hora_media_alerta_1_100 = {}  # Dicionário para mapear o código do equipamento para a hora do alerta igual a 1
 hora_media_alerta_80_100_saida = {}  # Dicionário para mapear o código do equipamento para a hora do alerta igual a 1
 
+
+
 async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     usuarios_bloqueados = set()
     alertas_enviados_acima = set()
@@ -5849,10 +5839,10 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
     while True:
         alertas_por_usina = {}
 
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                for cod_equipamento in cod_equipamentos:
-                    try:
+        for cod_equipamento in cod_equipamentos:
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
                         result = await cursor.fetchone()
 
@@ -5864,26 +5854,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                         if valores_atuais_114 is None:
                             continue
-
-
-                        '''
-                        # VERIFICAR SE OS VALORES ATUALIZAM OU SE ZERARAM E MUDA ALERTA PARA 0
-                        # INICIO 
-                        if all(value == 0 for value in valores_atuais_114):
-                            await cursor.execute(
-                                "UPDATE machine_learning.leituras_consecutivas SET alerta = 0 WHERE cod_campo = 114 AND cod_equipamento = %s AND alerta = 1",
-                                (int(cod_equipamento),)
-                            )
-                            print(f'\natualizando {cod_equipamento} para alerta e 0 pois os valores sao 0 de 114 em alerta 80% ou 100%\n')
-
-                        if agora - data_cadastro_consecutivas > timedelta(hours=1):
-                            await cursor.execute(
-                                "UPDATE machine_learning.leituras_consecutivas SET alerta = 0 WHERE cod_campo = 114 AND cod_equipamento = %s AND alerta = 1",
-                                (int(cod_equipamento),)
-                            )
-                            print(f'\natualizando {cod_equipamento} para alerta e 0 pois os valores nao atualizaram em 1 hora em alerta 80% ou 100%\n')
-                        # FIM
-                        '''
                         
                         await cursor.execute("SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1", (int(cod_equipamento),))
                         result = await cursor.fetchone()
@@ -5918,6 +5888,8 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                         if len(ultimos_valores[cod_equipamento]) > 5:
                             ultimos_valores[cod_equipamento].pop(0)
 
+                    #    print('\ncod_equipamento ',cod_equipamento,' ultimos_valores 80% ',ultimos_valores[cod_equipamento],'\n valores_atuais_114 ',valores_atuais_114)
+
                         if len(ultimos_valores[cod_equipamento]) == 5:
                             media = sum(ultimos_valores[cod_equipamento]) / len(ultimos_valores[cod_equipamento])
 
@@ -5928,17 +5900,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 alerta_80 = False
                                 alerta_100 = True
                                 
-                        #    if media > 0.1:
-                        #        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                        #        result = await cursor.fetchone()
-                        #        if result is not None:
-                        #            nome, cod_usina, cod_usuario = result
-                        #            print(f'\n{cod_equipamento} - {cod_usina} ultimos_valores_80_mais - ',ultimos_valores[cod_equipamento])
-                        #            print('media - ',media)
-                        #        else:
-                        #            continue
-
-
                             if media > 0.1 and media < 80 and not cod_equipamento in alertas_enviados:
 
                             #    if cod_equipamento not in hora_media_alerta_1_80: 
@@ -5969,8 +5930,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     """, (cod_equipamento, cod_usina, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
                                     await conn.commit()
 
-                                #    print(f'\nequipamentos dentro do media menor que 80% {cod_equipamento} - {cod_usina} valores 80% - ',ultimos_valores[cod_equipamento], 'previsoes: ', previsoes)
-                                #    print('media - ',media)
 
                             elif media >= 80 and media < 100:
                                 
@@ -6329,10 +6288,9 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     print('alerta removido de load speed')
 
 
-                        await asyncio.sleep(1)
                     
-                    except Exception as e:
-                        print(f"Ocorreu um erro em enviar_alerta_80_100 ao processar o equipamento {cod_equipamento}: {str(e)}")
+            except Exception as e:
+                print(f"Ocorreu um erro em enviar_alerta_80_100 ao processar o equipamento {cod_equipamento}: {str(e)}")
                         
                         
                 # for cod_usina, mensagens in alertas_por_usina.items():
@@ -6363,157 +6321,159 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                 #                                     id_telegram, nome_usuario, ativo = result
                 #                                     if ativo == 1:
 
-                for cod_usina, mensagens in alertas_por_usina.items():
-                    async with pool.acquire() as conn:
-                        async with conn.cursor() as cursor:
-                            # Buscar o nome e o código do modelo de funcionamento da usina
-                            await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                            result = await cursor.fetchone()
-                            if result:
-                                nome_usina, cod_modelo_funcionamento = result
-                                print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento)
+        for cod_usina, mensagens in alertas_por_usina.items():
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # Buscar o nome e o código do modelo de funcionamento da usina
+                    await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                    result = await cursor.fetchone()
+                    if result:
+                        nome_usina, cod_modelo_funcionamento = result
+                        print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento)
 
-                                # Verificar se o modelo de funcionamento permite enviar mensagens
-                                if cod_modelo_funcionamento not in [4, 12, 14]:
-                                    print('\nequipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é autorizado a mandar mensagem:', cod_modelo_funcionamento)
+                        # Verificar se o modelo de funcionamento permite enviar mensagens
+                        if cod_modelo_funcionamento not in [4, 12, 14]:
+                            print('\nequipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é autorizado a mandar mensagem:', cod_modelo_funcionamento)
 
-                                    # Buscar todos os cod_usuario associados à usina
-                                    await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                                    cod_usuarios = await cursor.fetchall()
+                            # Buscar todos os cod_usuario associados à usina
+                            await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
+                            cod_usuarios = await cursor.fetchall()
 
-                                    if cod_usuarios:
-                                        nomes_usuarios = []
+                            if cod_usuarios:
+                                nomes_usuarios = []
 
-                                        for cod_usuario_tuple in cod_usuarios:
-                                            cod_usuario = cod_usuario_tuple[0]
+                                for cod_usuario_tuple in cod_usuarios:
+                                    cod_usuario = cod_usuario_tuple[0]
 
-                                            # Verificar se o usuário não está silenciado
-                                            if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
+                                    # Verificar se o usuário não está silenciado
+                                    if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
 
-                                                # Verificar se a usina está ativa para o usuário
-                                                await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
-                                                usina_ativa_row = await cursor.fetchone()
-                                        #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
+                                        # Verificar se a usina está ativa para o usuário
+                                        await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
+                                        usina_ativa_row = await cursor.fetchone()
+                                #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
-                                                if usina_ativa_row and usina_ativa_row[0] == 1:
-                                                    await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                                                    result = await cursor.fetchone()
+                                        if usina_ativa_row and usina_ativa_row[0] == 1:
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            result = await cursor.fetchone()
+                                            
+                                            if result:
+                                                id_telegram, nome_usuario, ativo = result
+                                                if ativo == 1:
+                                                    try:
+                                                        nomes_usuarios.append(nome_usuario)
+                                                        botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                                        botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+
+                                                        keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+
+                                                        mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+#                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+
+                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+
+                                                        if cod_usuario in usuarios_bloqueados:
+                                                            usuarios_bloqueados.remove(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
                                                     
-                                                    if result:
-                                                        id_telegram, nome_usuario, ativo = result
-                                                #        print('usinas ativas do usuario',nome_usuario ,usina_ativa_row)
-                                                        if ativo == 1:
-                                                            try:
-                                                                nomes_usuarios.append(nome_usuario)
-                                                                botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
-                                                                botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+                                                    except BotBlocked:
+                                                        if cod_usuario not in usuarios_bloqueados:
+                                                            usuarios_bloqueados.add(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
 
-                                                                keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
 
-                                                                mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-        #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+                                nomes_usuarios_str = ', '.join(nomes_usuarios)
+                                id_grupo = await id_chat_grupo(pool)    
+                                mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                                nomes_usuarios.clear()
+                                sys.stdout.flush()
 
-                                                                await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                        elif cod_modelo_funcionamento in [4, 12, 14]:
 
-                                                                if cod_usuario in usuarios_bloqueados:
-                                                                    usuarios_bloqueados.remove(cod_usuario)
-                                                                    id_grupo = await id_chat_grupo(pool)
-                                                                    if id_grupo is not None:
-                                                                        await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                                    await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
-                                                                    await conn.commit()
+                            # Se o cod_modelo_funcionamento não estiver em [4, 12, 14], pule para a próxima iteração
+                        #    print('\nequipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento nao é autorizado a mandar mensagem:', cod_modelo_funcionamento, 'Cliente aceitou envio desse equipamento')
+
+                            # Buscar todos os cod_usuario associados à usina
+                            await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
+                            cod_usuarios = await cursor.fetchall()
+
+                            if cod_usuarios:
+                                nomes_usuarios = []
+
+                                for cod_usuario_tuple in cod_usuarios:
+                                    cod_usuario = cod_usuario_tuple[0]
+
+                                    # Verificar se o usuário não está silenciado
+                                    if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
+
+                                        # Verificar se a usina está ativa para o usuário
+                                        await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
+                                        usina_ativa_row = await cursor.fetchone()
+                                    #    print("(loop 2) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
+
+                                        if usina_ativa_row and usina_ativa_row[0] == 1:
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            result = await cursor.fetchone()
+
+                                            if result:
+                                                id_telegram, nome_usuario, ativo, todos_modelo_funcionamento = result
+                                                if ativo == 1 and todos_modelo_funcionamento == 1:
+                                                    try:
+                                                        nomes_usuarios.append(nome_usuario)
+                                                        botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                                        botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+
+                                                        keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+
+                                                        mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+#                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+
+                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+
+                                                        if cod_usuario in usuarios_bloqueados:
+                                                            usuarios_bloqueados.remove(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
+                                                    
+                                                    except BotBlocked:
+                                                        if cod_usuario not in usuarios_bloqueados:
+                                                            usuarios_bloqueados.add(cod_usuario)
+                                                            id_grupo = await id_chat_grupo(pool)
+                                                            if id_grupo is not None:
+                                                                await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
+                                                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
+                                                            await conn.commit()
                                                             
-                                                            except BotBlocked:
-                                                                if cod_usuario not in usuarios_bloqueados:
-                                                                    usuarios_bloqueados.add(cod_usuario)
-                                                                    id_grupo = await id_chat_grupo(pool)
-                                                                    if id_grupo is not None:
-                                                                        await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                                    await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
-                                                                    await conn.commit()
-
-
-                                    nomes_usuarios_str = ', '.join(nomes_usuarios)
-                                    id_grupo = await id_chat_grupo(pool)    
-                                    mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
-                                    nomes_usuarios.clear()
-                                    sys.stdout.flush()
-
-                                elif cod_modelo_funcionamento in [4, 12, 14]:
-
-                                    # Se o cod_modelo_funcionamento não estiver em [4, 12, 14], pule para a próxima iteração
-                                #    print('\nequipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento nao é autorizado a mandar mensagem:', cod_modelo_funcionamento, 'Cliente aceitou envio desse equipamento')
-
-                                    # Buscar todos os cod_usuario associados à usina
-                                    await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                                    cod_usuarios = await cursor.fetchall()
-
-                                    if cod_usuarios:
-                                        nomes_usuarios = []
-
-                                        for cod_usuario_tuple in cod_usuarios:
-                                            cod_usuario = cod_usuario_tuple[0]
-
-                                            # Verificar se o usuário não está silenciado
-                                            if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
-
-                                                # Verificar se a usina está ativa para o usuário
-                                                await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
-                                                usina_ativa_row = await cursor.fetchone()
-                                            #    print("(loop 2) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
-
-                                                if usina_ativa_row and usina_ativa_row[0] == 1:
-                                                    await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                                                    result = await cursor.fetchone()
-
-                                                    if result:
-                                                        id_telegram, nome_usuario, ativo, todos_modelo_funcionamento = result
-                                                        if ativo == 1 and todos_modelo_funcionamento == 1:
-                                                            try:
-                                                                nomes_usuarios.append(nome_usuario)
-                                                                botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
-                                                                botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
-
-                                                                keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
-
-                                                                mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-        #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
-
-                                                                await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
-
-                                                                if cod_usuario in usuarios_bloqueados:
-                                                                    usuarios_bloqueados.remove(cod_usuario)
-                                                                    id_grupo = await id_chat_grupo(pool)
-                                                                    if id_grupo is not None:
-                                                                        await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                                    await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
-                                                                    await conn.commit()
-                                                            
-                                                            except BotBlocked:
-                                                                if cod_usuario not in usuarios_bloqueados:
-                                                                    usuarios_bloqueados.add(cod_usuario)
-                                                                    id_grupo = await id_chat_grupo(pool)
-                                                                    if id_grupo is not None:
-                                                                        await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                                    await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
-                                                                    await conn.commit()
-                                                                    
-                                    nomes_usuarios_str = ', '.join(nomes_usuarios)
-                                    id_grupo = await id_chat_grupo(pool)    
-                                    mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
-                                    nomes_usuarios.clear()
-                                    sys.stdout.flush()
-                                                                
-                                                                
+                                nomes_usuarios_str = ', '.join(nomes_usuarios)
+                                id_grupo = await id_chat_grupo(pool)    
+                                mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                                nomes_usuarios.clear()
+                                sys.stdout.flush()
 
 #        tempo_inicial = datetime.now()
 #        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
 #        print('---------------------------------------------------- fim enviar_alerta_80_100 -----------------------------------------------------------------',data_cadastro_formatada,'\n')
 
 #        await asyncio.sleep(10)
-        await asyncio.sleep(180)
+        await asyncio.sleep(120)
+      
+
+
+
+
 
 
 
@@ -6642,82 +6602,6 @@ async def enviar_previsao_valor_equipamento(message: types.Message, id_telegram=
                             await bot.send_message(id_telegram, mensagem)
                         else:
                             await bot.send_message(chat_id, mensagem)
-
-
-#                else:
-
-                # elif message.text == 'bruno.zanella':
-                #     usinas_equipamentos = {}
-                
-                #     await cursor.execute("SELECT codigo FROM sup_geral.usinas WHERE ativo = 1")
-                #     cod_usinas = await cursor.fetchall()
-                #     mensagem_total_equipamentos = ""
-
-                #     mensagem = f"Usina de {nome_supervisorio} e seus equipamentos:\n\n"
-                #     total_equipamentos = 0
-
-                #     for cod_usina_tuple in cod_usinas:
-                #         cod_usina = cod_usina_tuple[0]
-
-                #         codigos_GMG = await selecionar_GMG()
-
-                #         placeholders = ', '.join(['%s'] * len(codigos_GMG))
-                #         query = f"SELECT codigo FROM sup_geral.equipamentos WHERE cod_usina = %s AND cod_tipo_equipamento IN ({placeholders}) AND ativo = 1"
-                #         await cursor.execute(query, [cod_usina] + list(codigos_GMG))
-                #         cod_equipamentos = await cursor.fetchall()
-
-                #         equipamentos_lista = [str(resultado[0]) for resultado in cod_equipamentos]
-
-                #         for equipamento in equipamentos_lista:
-                #             await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(equipamento),))
-                #             valores_atuais = await cursor.fetchone()
-                #             if valores_atuais is not None:
-                #                 if all(valor != 0 for valor in valores_atuais):
-                #                     coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(equipamento), pool)
-                #                     previsoes, alerta = await fazer_previsao(valores_atuais, coeficiente_existente, intercepto_existente, int(equipamento), pool)
-
-                #                     if isinstance(previsoes, int):
-                #                         if previsoes != 0:
-                #                             total_equipamentos += 1
-
-                #                             await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(equipamento),))
-                #                             valores_atuais_114 = await cursor.fetchone()
-
-                #                             valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-
-                #                             equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {previsoes} \n{alerta}'
-
-                #                             if cod_usina not in usinas_equipamentos:
-                #                                 await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                #                                 nome_usina = await cursor.fetchone()[0]
-                #                                 usinas_equipamentos[cod_usina] = {'nome': nome_usina, 'equipamentos': []}
-
-                #                             usinas_equipamentos[cod_usina]['equipamentos'].append(f'Equipamento: {equipamento}: {equipamentos_str}\n\n')
-
-
-                #                     elif isinstance(previsoes, list):
-                #                         if not all(valor == 0 for valor in previsoes):
-                #                             total_equipamentos += 1
-
-                #                             await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(equipamento),))
-                #                             valores_atuais_114 = await cursor.fetchone()
-
-                #                             valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-
-                #                             equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {previsoes} \n{alerta}'
-
-                #                             if cod_usina not in usinas_equipamentos:
-                #                                 await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                #                                 nome_usina = (await cursor.fetchone())[0]
-                #                                 usinas_equipamentos[cod_usina] = {'nome': nome_usina, 'equipamentos': []}
-
-                #                             usinas_equipamentos[cod_usina]['equipamentos'].append(f'Equipamento: {equipamento}: {equipamentos_str}\n\n')
-
-                #                     mensagem = f"Usina de {nome_supervisorio} e seus equipamentos:\n\n"
-                #                     for cod_usina, info in usinas_equipamentos.items():
-                #                         mensagem += f'<b>Usina: {cod_usina} - {html.escape(info["nome"])}</b>  \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'
-                #                         for equipamento in info['equipamentos']:
-                #                             mensagem += html.escape(equipamento)
                                             
 
                 elif message.text == 'bruno.zanella':
@@ -6829,6 +6713,8 @@ async def enviar_previsao_valor_equipamento(message: types.Message, id_telegram=
             else:
                 await message.reply("Usuário não encontrado.")
 
+
+
 async def enviar_previsao_valor_usina_menu(cod_usina, chat_id=None):
     pool = await create_pool()
     codigos_GMG = await selecionar_GMG(pool)
@@ -6863,6 +6749,10 @@ async def enviar_previsao_valor_usina_menu(cod_usina, chat_id=None):
                 await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (int(equipamento),))
                 valores_atuais_114 = await cursor.fetchone()
 
+                if valores_atuais_114 is None:
+                    mensagem += f"Equipamento: {equipamento} ({nome_equipamento}) - Valores do campo 114 não encontrados na base de dados.\n\n"
+                    continue
+
                 valores_atuais_str = ', '.join(map(str, valores_atuais_114))
 
                 equipamentos_str = f'\nValores Atuais: {valores_atuais_str} \nValores Previstos: {previsoes}\n{alerta}'
@@ -6877,6 +6767,10 @@ async def enviar_previsao_valor_usina_menu(cod_usina, chat_id=None):
                     await bot.send_message(target_chat_id, parte)
             else:
                 await bot.send_message(target_chat_id, mensagem)
+
+
+
+
 
 async def enviar_previsao_valor_equipamento_menu(chat_id, cod_equipamento):
     pool = await create_pool()
@@ -7070,6 +6964,78 @@ async def notificar_todos_os_usuarios(pool):
     await enviar_mensagem_para_grupo(pool)
     
 
+
+
+async def on_startup(dp):
+    dp.pool = await create_pool()
+    await criar_tabelas(dp.pool)
+
+    # Certifique-se de que as tasks estão sendo aguardadas
+    try:
+        asyncio.create_task(processar_equipamentos_async(dp))
+        asyncio.create_task(outros_processos_async(dp))
+    except Exception as e:
+        print(f"Erro ao iniciar tarefas: {e}")
+
+async def processar_equipamentos_async(dp):
+    try:
+        tabelas = 'sup_geral.leituras'
+        cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
+        await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+    except asyncio.CancelledError:
+        print("Tarefa de processamento de equipamentos cancelada.")
+    except Exception as e:
+        print(f"Erro durante o processamento dos equipamentos: {e}")
+
+async def outros_processos_async(dp):
+    try:
+        tabelas = 'sup_geral.leituras'
+        cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
+
+        # Certifique-se de que as tarefas são aguardadas
+        tarefas = [
+            asyncio.create_task(enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)),
+            asyncio.create_task(enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)),
+            monitorar_leituras_consecutivas(dp.pool),
+            verificar_alarmes(dp.pool),
+            verificar_e_excluir_linhas_expiradas(dp.pool),
+            monitor_log_file(),
+            clean_temp_files(),
+            atualizar_usinas_usuario(dp.pool)
+        ]
+        await asyncio.gather(*tarefas)
+    except asyncio.CancelledError:
+        print("Tarefa de outros processos cancelada.")
+    except Exception as e:
+        print(f"Erro durante a execução de outros processos: {e}")
+
+async def criar_tabelas(pool):
+    await criar_tabela_usuarios_telegram(pool)
+    await criar_tabela_relatorio_quebras(pool)
+    await criar_tabela_log_relatorio_quebras(pool)
+    await criar_tabela_silenciar_bot(pool)
+    await criar_tabela_leituras(pool)
+    await criar_tabela_valores_previsao(pool)
+    await criar_tabela_falhas_gerais(pool)
+    await criar_tabela_usinas_usuario(pool)
+
+async def on_shutdown(dp):
+    dp.pool.close()
+    await dp.pool.wait_closed()
+    
+if __name__ == '__main__':
+    try:
+        executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    except KeyboardInterrupt:
+        print("Interrompido pelo usuário")
+
+
+
+
+
+'''
+
+
 async def on_startup(dp):
     # Iniciar o pool de conexões
     dp.pool = await create_pool()
@@ -7104,9 +7070,9 @@ async def on_startup(dp):
 #    task_monitorar_quebras = asyncio.create_task(monitorar_quebras(dp.pool))
 
     task_monitor_log_file = asyncio.create_task(monitor_log_file())
-#    task_monitor_monitor_geradores_operacao = asyncio.create_task(monitor_geradores_operacao())
 
     task_clean_temp_files = asyncio.create_task(clean_temp_files())
+    task_atualizar_usinas_usuario = asyncio.create_task(atualizar_usinas_usuario(dp.pool))
 
     # Aguardar a conclusão do polling antes de prosseguir
     await polling_task
@@ -7120,8 +7086,8 @@ async def on_startup(dp):
         task_verificar_alarmes,
         task_verificar_e_excluir_linhas_expiradas,
         task_monitor_log_file,
-    #    task_monitor_monitor_geradores_operacao,
         task_clean_temp_files,
+        task_atualizar_usinas_usuario,
 #        task_monitorar_quebras
     )
 
@@ -7141,3 +7107,4 @@ if __name__ == '__main__':
 
 
 
+'''
