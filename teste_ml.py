@@ -36,7 +36,7 @@ st.markdown("""
 
     /* Movendo o título h2 15px mais para cima */
     .stMarkdown h2 {
-        margin-top: -100px;  /* Subir o título */
+        margin-top: -80px;  /* Subir o título */
         color: #FAFAFA;
         text-align: center;
     }
