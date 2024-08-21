@@ -220,105 +220,6 @@ async def fetch_data():
             await cursor.execute(query_equipamentos, (tuple(cod_equipamentos),))
             equipamentos_data = await cursor.fetchall() or []
 
-
-            # # Query para verificar os alertas e previsões em um intervalo de 300 segundos
-            # tipo_alerta_data = []
-            # query_tipo_alertas = """
-            #     SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
-            #            data_cadastro_previsto, 
-            #            alerta_80, 
-            #            alerta_100, 
-            #            previsao
-            #     FROM valores_previsao
-            #     WHERE cod_equipamento = %s 
-            #       AND ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300
-            # """
-            # for cod_equipamento, data_previsto in data_cadastro_previsto_map.items():
-            #     await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto))
-            #     result = await cursor.fetchall() or []
-                
-            #     # Verificação e formatação do alerta
-            #     for row in result:
-            #         alerta = None
-            #         if row[2] == 1:  # alerta_80
-            #             alerta = "80%"
-            #         elif row[3] == 1:  # alerta_100
-            #             alerta = "100%"
-            #         elif row[4] == 1:  # previsao
-            #             alerta = "Previsão"
-                    
-            #         if alerta:
-            #             tipo_alerta_data.append({
-            #                 'cod_equipamento': row[0],
-            #             #    'data_cadastro_previsto': row[1],
-            #                 'alerta': alerta
-            #             })
-        #    print('tipo_alerta_data',tipo_alerta_data)
-
-
-
-
-
-
-
-            # Lista para acumular os alertas por equipamento
-            # tipo_alerta_data = []
-
-
-            # # Loop para verificar os alertas e previsões
-            # for cod_equipamento, data_previsto in data_cadastro_previsto_map.items():
-            #     data_quebra = data_cadastro_quebra_map.get(cod_equipamento)
-                
-            #     if data_quebra:  # Se data_cadastro_quebra existir
-            #         query_tipo_alertas = """
-            #             SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
-            #                 data_cadastro_previsto, 
-            #                 alerta_80, 
-            #                 alerta_100, 
-            #                 previsao
-            #             FROM valores_previsao
-            #             WHERE cod_equipamento = %s 
-            #             AND (ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300 
-            #                 OR ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300)
-            #             ORDER BY data_cadastro_previsto
-            #         """
-            #         await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto, data_quebra))
-            #     else:  # Se data_cadastro_quebra não existir, use a hora atual como limite
-            #         query_tipo_alertas = """
-            #             SELECT CAST(cod_equipamento AS CHAR) AS cod_equipamento, 
-            #                 data_cadastro_previsto, 
-            #                 alerta_80, 
-            #                 alerta_100, 
-            #                 previsao
-            #             FROM valores_previsao
-            #             WHERE cod_equipamento = %s 
-            #             AND (ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300 
-            #                 OR ABS(TIMESTAMPDIFF(SECOND, data_cadastro_previsto, %s)) < 300)
-            #             ORDER BY data_cadastro_previsto
-            #         """
-            #         await cursor.execute(query_tipo_alertas, (cod_equipamento, data_previsto, now))
-
-            #     result = await cursor.fetchall() or []
-                
-            #     # Verificação e acumulação dos alertas únicos
-            #     alertas = set()  # Usar um set para garantir que cada alerta apareça apenas uma vez
-            #     for row in result:
-            #         if row[2] == 1:  # alerta_80
-            #             alertas.add("80%")
-            #         if row[3] == 1:  # alerta_100
-            #             alertas.add("100%")
-            #         if row[4] == 1:  # previsao
-            #             alertas.add("Previsão")
-                
-            #     # Adiciona os alertas, se existirem
-            #     if alertas:
-            #         tipo_alerta_data.append({
-            #             'cod_equipamento': cod_equipamento,
-            #             'alerta': ', '.join(sorted(alertas))  # Junta os alertas em ordem alfabética
-            #         })
-
-
-
             # Dicionário para acumular os alertas por equipamento
             equipamento_alertas = {}
 
@@ -375,8 +276,6 @@ async def fetch_data():
             # Criar um dicionário para mapear cod_equipamento ao valor do alerta finalizado
             alerta_dict = {cod_equipamento: ', '.join(sorted(alertas)) if isinstance(alertas, set) else alertas
                             for cod_equipamento, alertas in equipamento_alertas.items()}
-
-
 
             # Query para obter os equipamentos com alerta = 1 e cod_campo = 114
             query_alertas = """
@@ -453,7 +352,7 @@ async def main():
         st.logo('log_brg_novo_branco_2.png')
     #    st.image('../imagens/log_brg_novo_branco_2.png', width=150)
         st.markdown('<div class="main-container">', unsafe_allow_html=True)
-        st.markdown('<h2>Relatório de Quebras Diário</h2>', unsafe_allow_html=True)
+        st.markdown('<h2>Relatório de Análise Preditiva Diária</h2>', unsafe_allow_html=True)
 
     while True:
         # Recuperar os dados
