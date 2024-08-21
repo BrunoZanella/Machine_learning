@@ -18,29 +18,52 @@ st.set_page_config(
 # Aplicar CSS personalizado
 st.markdown("""
     <style>
-    
-    /* Centraliza a página inteira */
+    /* Ajustar a distância da borda superior */
     .main-container {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;  /* Certifica que os itens começam do topo */
         background-color: #0E1117;
         color: #FAFAFA;
+        padding-top: 0px;  /* Ajuste a distância da borda superior */
+    }
+
+    /* Movendo a logo 20px mais para cima */
+    .stImage {
+        margin-top: -150px; /* Subir a imagem em 20px */
+    }
+
+    /* Movendo o título h2 15px mais para cima */
+    .stMarkdown h2 {
+        margin-top: -100px;  /* Subir o título */
+        color: #FAFAFA;
+        text-align: center;
+    }
+
+    /* Movendo o gauge 50px mais para cima */
+    .stPlotlyChart {
+        margin-top: -60px; /* Subir o gauge em 50px */
+    }
+
+    /* Movendo a tabela 60px mais para cima */
+    .dataframe-container {
+        margin-top: -60px; /* Subir a tabela em 60px */
+        overflow-x: hidden;
     }
 
     /* Estilo da tabela */
     table {
         width: 80px;
         border-collapse: collapse;
-        margin-top: 20px;
+        margin-top: 10px;
     }
 
     th, td {
         padding: 10px;
         text-align: center;
         border: 1px solid #ddd;
-        white-space: nowrap; /* Garante que os textos caibam em uma linha */
+        white-space: nowrap;
         color: #FAFAFA;
     }
 
@@ -55,25 +78,12 @@ st.markdown("""
 
     td.estado-sem-parada {
         background-color: #97FF4B;
-        color: #000000; /* Preto para 'Sem parada' */
+        color: #000000;
     }
 
     td.estado-em-funcionamento {
-        background-color: #FFFF00; /* Amarelo para 'Em funcionamento' */
-        color: #000000; /* Preto para contraste */
-    }
-
-    /* Remove scroll da tabela */
-    .dataframe-container {
-        overflow-x: hidden;
-    }
-
-    /* Título */
-    .stMarkdown h1 {
-        color: #FF4B4B;
-        text-align: center;
-        font-size: 14px;  /* Ajuste o tamanho da fonte aqui */
-
+        background-color: #FFFF00;
+        color: #000000;
     }
 
     /* Atualização */
@@ -99,6 +109,7 @@ st.markdown("""
 
     </style>
     """, unsafe_allow_html=True)
+
 
 
 async def fetch_data():
@@ -439,7 +450,10 @@ async def main():
 
     # Adicionar a logo no canto esquerdo
     with placeholder_logo.container():
-        st.image('log_brg_novo_branco_2.png', width=150)
+        st.logo('../imagens/log_brg_novo_branco_2.png')
+    #    st.image('../imagens/log_brg_novo_branco_2.png', width=150)
+        st.markdown('<div class="main-container">', unsafe_allow_html=True)
+        st.markdown('<h2>Relatório de Quebras Diário</h2>', unsafe_allow_html=True)
 
     while True:
         # Recuperar os dados
@@ -447,8 +461,6 @@ async def main():
         
         # Atualizar o gauge
         with placeholder_gauge.container():
-            st.markdown('<div class="main-container">', unsafe_allow_html=True)
-            st.markdown('<h2>Relatório de Quebras Diário</h2>', unsafe_allow_html=True)
 
             # Obter a hora atual em São Paulo
             now = datetime.now(tz_sao_paulo)
