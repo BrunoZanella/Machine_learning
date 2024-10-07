@@ -3,6 +3,10 @@ import pandas as pd
 #from sqlalchemy import create_engine, MetaData, inspect
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+
 from datetime import datetime, timedelta, time
 
 from sklearn.metrics import r2_score
@@ -19,10 +23,19 @@ from sklearn.preprocessing import scale
 from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error
 from sklearn.linear_model import Ridge, Lasso
+from sklearn.preprocessing import PolynomialFeatures
 
 from scipy import stats
 import numpy as np 
 import sys
+from scipy.stats import boxcox
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import Ridge, LinearRegression
+from sklearn.metrics import r2_score
+import statsmodels.api as sm
+from scipy import stats
+from statsmodels.graphics.tsaplots import plot_acf
 
 
 tempo_inicial = datetime.now()
@@ -58,7 +71,7 @@ def selecionar_GMG():
 
 numero_tabelas = 10
 
-percent_treino = 0.5
+percent_treino = 0.3
 
 quantidade_tabelas_treino = int(numero_tabelas * percent_treino)
 
@@ -105,18 +118,13 @@ total_equipamentos = len(cod_equipamentos_validos)
 cod_equipamentos_validos = sorted([int(cod) for cod in cod_equipamentos_validos])
 
 cod_campo_especificados = ['3', '114']
-#cod_campo_especificados = ['3', '114', '23']
 
-#print('\ncod_equipamentos',cod_equipamentos)
-#print('\ncod_equipamentos_validos',cod_equipamentos_validos)
 print('\ntabelas',tabelas)
-#print('\ntabelas_treino',tabelas_treino)
-#print('\ntabelas_teste',tabelas_teste)
 print('\nultima_tabela',ultima_tabela)
 print('\n')
 print(f"Total de {total_equipamentos} equipamentos na tabela {ultima_tabela}")
 
-# Verificar se há valores na coluna valor para os cod_campo_especificados em todas as tabelas
+
 total_equipamentos_com_valores = 0
 equipamentos_com_valores = []
 
@@ -143,18 +151,42 @@ for cod_equipamento in cod_equipamentos_validos:
 print(f"Total de equipamentos válidos com valores nos campos especificados: {total_equipamentos_com_valores}")
 
 
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import Ridge, LinearRegression
-from sklearn.metrics import r2_score
-import statsmodels.api as sm
-from scipy import stats
+# Importante para verificar valores válidos em várias tabelas
+equipamentos_validados = []
+
+for cod_equipamento in cod_equipamentos_validos:
+    tabelas_com_valores = 0
+    
+    for tabela in tabelas:
+        query_verificar_valores = f"""
+            SELECT COUNT(*) FROM {tabela} 
+            WHERE cod_equipamento = {cod_equipamento} 
+            AND cod_campo IN ({', '.join(cod_campo_especificados)}) 
+            AND valor IS NOT NULL
+            AND valor > 0
+        """
+        cursor_leitura.execute(query_verificar_valores)
+        resultado = cursor_leitura.fetchone()
+        
+        if resultado[0] > 0:
+            tabelas_com_valores += 1
+        
+        # Verificação se já atingiu o limite de 3 tabelas com valores válidos
+        if tabelas_com_valores >= 3:
+            equipamentos_validados.append(cod_equipamento)
+            break
+
+print(f"Total de equipamentos válidos com valores em três ou mais tabelas: {len(equipamentos_validados)}")
+
+#equipamentos_validados = [2173,2656,2657,2658,2659,2660,2661,2662,2663,2664]
+
 
 
 def treinar_modelo_e_filtrar(X, y, model, outlier_threshold=2):
-    model.fit(X, y)
 
+    model.fit(X, y)
     y_pred = model.predict(X)
+
     residuos = y - y_pred
     media_residuos = np.mean(residuos)
     desvio_padrao_residuos = np.std(residuos)
@@ -181,7 +213,64 @@ def treinar_modelo_e_filtrar(X, y, model, outlier_threshold=2):
     r2_filtrado = round(r2_filtrado, 4)
     intercepto = round(intercepto, 4)
 
+    #####################################
+
+    # Plota o gráfico de regressão
+    # plt.figure()
+    # plt.scatter(X, y, color='blue', label='Dados Reais')
+    # plt.plot(X, y_pred, color='red', linewidth=2, label='Linha de Regressão')
+    # plt.xlabel('Pot Ativa')
+    # plt.ylabel('Load Speed')
+    # plt.title('Regressão Linear: Pot Ativa vs Load Speed')
+    # plt.legend()
+    # plt.savefig('regression_plot.png')
+    # plt.close()
+
+    # # Imprime o resumo do modelo ajustado
+    # print(est2_filtrado.summary())
+
+    # # Teste Shapiro-Wilk para normalidade dos resíduos
+    # stat, p_value = stats.shapiro(residuos)
+    # print(f'Teste Shapiro-Wilk: Estatística={stat}, p-valor={p_value}')
+
+    # # Histograma dos Resíduos
+    # plt.figure()
+    # plt.hist(residuos, bins=30, edgecolor='k')
+    # plt.xlabel('Resíduos')
+    # plt.ylabel('Frequência')
+    # plt.title('Histograma dos Resíduos')
+    # plt.savefig('histograma_residuos.png')
+    # plt.close()
+
+    # # Q-Q Plot dos Resíduos
+    # plt.figure()
+    # stats.probplot(residuos, dist="norm", plot=plt)
+    # plt.title('Q-Q Plot dos Resíduos')
+    # plt.savefig('qq_plot_residuos.png')
+    # plt.close()
+
+    # # Teste Durbin-Watson
+    # durbin_watson = sm.stats.durbin_watson(residuos)
+    # print(f'Teste Durbin-Watson: {durbin_watson}')
+
+    # # Correlograma dos Resíduos (ACF)
+    # plt.figure()
+    # plot_acf(residuos, lags=50)
+    # plt.title('Correlograma dos Resíduos')
+    # plt.savefig('acf_residuos.png')
+    # plt.close()
+
+    # # Plotagem de ACF e PACF para verificar autocorrelação
+    # fig, ax = plt.subplots(1, 2, figsize=(15, 5))
+    # sm.graphics.tsa.plot_acf(residuos, lags=40, ax=ax[0])
+    # sm.graphics.tsa.plot_pacf(residuos, lags=40, ax=ax[1])
+    # plt.savefig('autocorrelation.png')
+    # plt.show()
+    
+    #####################################
+
     return coeficiente, intercepto, r2_filtrado, coeficiente_significativo
+
 
 def verificar_e_obter_coeficiente(cod_equipamento, X, y):
     coeficiente_existente = 0.0
@@ -207,8 +296,8 @@ def verificar_e_obter_coeficiente(cod_equipamento, X, y):
         acuracia_existente = resultado[4]
         print(f'Coeficiente Existente = {coeficiente_existente}, Intercepto Existente = {intercepto_existente}, Acuracia = {acuracia_existente}')
 
-    alphas = [0.1, 1.0, 10.0]
-    outlier_thresholds = [2, 2.5, 3]
+    alphas = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+    outlier_thresholds = [0.05, 0.5, 1, 1.5, 2, 2.5, 3, 3.5,4]
 
     for alpha in alphas:
         for outlier_threshold in outlier_thresholds:
@@ -243,8 +332,10 @@ def verificar_e_obter_coeficiente(cod_equipamento, X, y):
     print(f"O coeficiente para o equipamento {cod_equipamento} não pôde ser tornado significativo.")
     return coeficiente_existente, intercepto_existente, acuracia_existente
 
+
 #for cod_equipamento in cod_equipamentos_validos:
 for cod_equipamento in equipamentos_com_valores:
+#for cod_equipamento in equipamentos_validados:
     try:
         queries = []
         for tabela in tabelas:
@@ -271,11 +362,13 @@ for cod_equipamento in equipamentos_com_valores:
         df_pivoted = df_pivoted.dropna(subset=['valor_cod_campo_3', 'valor_cod_campo_114'])
         df_pivoted = df_pivoted.interpolate()
         z_scores = np.abs(stats.zscore(df_pivoted[['valor_cod_campo_3', 'valor_cod_campo_114']]))
-        
+
+
         print('\n----------------------------------------------------------------------------------------------------------------\n')
         print(f'equipamento: {cod_equipamento} \n')
 
-        X = df_pivoted['valor_cod_campo_3'].astype(float).values.reshape(-1, 1)
+
+        X = df_pivoted[['valor_cod_campo_3']].astype(float).values
         y = df_pivoted['valor_cod_campo_114'].astype(float)
 
         coeficiente = 0.0
@@ -288,6 +381,19 @@ for cod_equipamento in equipamentos_com_valores:
         intercepto += intercepto_existente
 
         sys.stdout.flush()
+
+        # correlation = df_pivoted[['valor_cod_campo_3', 'valor_cod_campo_114', 'valor_cod_campo_21']].corr()
+        # print(correlation)
+        
+        # plt.scatter(df_pivoted['valor_cod_campo_3'], df_pivoted['valor_cod_campo_114'])
+        # plt.xlabel('Pot Ativa (valor_cod_campo_3)')
+        # plt.ylabel('Load Speed (valor_cod_campo_114)')
+        # plt.title('Relação entre Pot Ativa e Load Speed')
+        # plt.savefig('scatter_plot.png')
+        # plt.close()
+
+
+
 
     except Exception as error:
         print('\n----------------------------------------------------------------------------------------------------------------\n')                            

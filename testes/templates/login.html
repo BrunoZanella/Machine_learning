@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #1f4037, #99f2c8);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+
+        .login-container {
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            color: #fff;
+        }
+
+        .login-container h1 {
+            font-size: 2rem;
+            margin-bottom: 30px;
+            font-weight: 700;
+            color: #f7f7f7;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        label {
+            font-size: 1rem;
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        input[type="email"], input[type="password"] {
+            padding: 15px;
+            border-radius: 10px;
+            border: none;
+            background: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            font-size: 1rem;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+
+        input[type="email"]:focus, input[type="password"]:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .submit-btn {
+            background: linear-gradient(45deg, #ff416c, #ff4b2b);
+            color: white;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+        }
+
+        .submit-btn:hover {
+            background: linear-gradient(45deg, #ff4b2b, #ff416c);
+            box-shadow: 0 5px 15px rgba(255, 75, 43, 0.4);
+        }
+
+        .login-container p {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #e0e0e0;
+        }
+
+        .login-container a {
+            color: #ff416c;
+            text-decoration: none;
+        }
+
+        .login-container a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 500px) {
+            .login-container {
+                padding: 30px;
+                width: 90%;
+            }
+
+            .login-container h1 {
+                font-size: 1.8rem;
+            }
+
+            input[type="email"], input[type="password"] {
+                padding: 12px;
+                font-size: 0.9rem;
+            }
+
+            .submit-btn {
+                padding: 12px;
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Login</h1>
+        <form method="POST" action="{{ url_for('login') }}">
+            {{ form.hidden_tag() }}
+            <label for="email">{{ form.email.label }}</label>
+            {{ form.email(class_="form-control", style="width: 100%; padding: 15px; border-radius: 10px; background: rgba(255, 255, 255, 0.2); color: #fff; font-size: 1rem; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);") }}
+            <label for="password">{{ form.password.label }}</label>
+            {{ form.password(class_="form-control", style="width: 100%; padding: 15px; border-radius: 10px; background: rgba(255, 255, 255, 0.2); color: #fff; font-size: 1rem; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);") }}
+            <button type="submit" class="submit-btn">{{ form.submit() }}</button>
+        </form>
+        <p>Não tem uma conta? <a href="{{ url_for('register') }}">Cadastre-se aqui</a></p>
+    </div>
+</body>
+</html>

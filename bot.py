@@ -120,7 +120,7 @@ async def create_pool():
 user_reports = {}
 
 
-
+'''
 class ReportStates(StatesGroup):
     period = State()
     funcionamento = State()
@@ -179,7 +179,23 @@ async def send_welcome(message: types.Message):
 async def show_report_options(message: types.Message):
     await message.reply("Escolha o período do relatório:", reply_markup=report_keyboard)
 
+'''
 
+
+# Dicionário de funcionamento
+funcionamento_map = {
+    "Controle de demanda": "CONTROLE DE DEMANDA",
+    "Horário de ponta": "HORARIO DE PONTA",
+    "Operação contínua": "OPERACAO CONTINUA",
+    "Falta de energia": "FALTA DE ENERGIA",
+    "Geral": "Geral",
+    "Agrogera GO": "aggo",
+    "Agrogera MG": "agmg",
+    "Agrogera BA": "AGROGERA",
+}
+
+# Chave inversa para mapear de volta para o nome original do teclado
+reverse_funcionamento_map = {v: k for k, v in funcionamento_map.items()}
 
 
 # Inicializando os modelos Gemini-Pro e Gemini-Pro Vision
@@ -703,6 +719,8 @@ async def Corrente_L3 (pool, cod_equipamento, data_previsto, data_cadastro_quebr
         return f"    Corrente L3 média: {round(result['avg_corrente_l3'])}\n"
 
     return ""
+
+
 
 async def fetch_report_data(pool, period, user_id, funcionamento):
     try:
@@ -1455,24 +1473,6 @@ async def fetch_report_data(pool, period, user_id, funcionamento):
 
 
 
-@dp.message_handler(lambda message: message.text in ["1 dia", "2 dias", "7 dias", "15 dias", "1 mês"])
-async def handle_report_period(message: types.Message):
-    try:
-        period_map = {
-            "1 dia": 1,
-            "2 dias": 2,
-            "7 dias": 7,
-            "15 dias": 15,
-            "1 mês": 30
-        }
-        period = period_map[message.text]
-        user_id = message.from_user.id
-        user_reports[user_id] = {"period": period}
-        await message.reply("Selecione o tipo de funcionamento:", reply_markup=funcionamento_keyboard)
-    except Exception as e:
-        await message.reply(f"Ocorreu um erro ao selecionar o período: {str(e)}")
-
-
 
 # Variáveis globais para armazenar informações necessárias
 global_vars = {
@@ -1492,6 +1492,7 @@ global_vars = {
 
 # Função assíncrona para monitorar o arquivo de log
 async def monitor_log_file():
+    await asyncio.sleep(10)
     id_grupo = global_vars["id_grupo"]
 
     while True:
@@ -1528,7 +1529,7 @@ async def monitor_log_file():
                                 for error_line in new_lines:
                                     if "ERROR" in error_line and "asyncio:Task was destroyed but it is pending" in error_line:
                                         print("\n\nEncontrou um erro no intervalo!\n\n")
-                                        pool = await create_pool()
+                                        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
                                         report_data = await fetch_report_data(pool, period, user_id, funcionamento)
                                         telegram_report, detailed_report, dados_gemini = report_data
                                         pdf_filename = f"relatorio_{funcionamento}_{period}_dias.pdf"
@@ -1583,9 +1584,295 @@ async def monitor_log_file():
 
 
 
+# Dicionário de períodos
+period_map = {
+    "1_dia": "1 dia",
+    "2_dias": "2 dias",
+    "7_dias": "7 dias",
+    "15_dias": "15 dias",
+    "1_mês": "30 dias"
+}
+
+# Função para criar botões inline para o período
+def create_period_buttons():
+    buttons = InlineKeyboardMarkup(row_width=2)
+    
+    # Adiciona "1 dia" e "2 dias" na mesma linha
+    buttons.add(
+        InlineKeyboardButton("1 dia", callback_data="period_1_dia"),
+        InlineKeyboardButton("2 dias", callback_data="period_2_dias")
+    )
+    
+    # Adiciona "7 dias" e "15 dias" na mesma linha
+    buttons.add(
+        InlineKeyboardButton("7 dias", callback_data="period_7_dias"),
+        InlineKeyboardButton("15 dias", callback_data="period_15_dias")
+    )
+    
+    # Adiciona "1 mês" em uma linha própria
+    buttons.add(InlineKeyboardButton("1 mês", callback_data="period_1_mês"))
+    
+    return buttons
+
+# Função para criar botões inline para o funcionamento
+def create_funcionamento_buttons():
+    buttons = InlineKeyboardMarkup(row_width=2)  # Define a largura padrão como 2 por linha
+
+    # Adiciona "Controle de demanda" e "Horário de ponta" na mesma linha
+    buttons.add(
+        InlineKeyboardButton("Controle de demanda", callback_data="funcionamento_Controle_de_demanda"),
+        InlineKeyboardButton("Horário de ponta", callback_data="funcionamento_Horário_de_ponta")
+    )
+
+    # Adiciona "Operação contínua" e "Falta de energia" na mesma linha
+    buttons.add(
+        InlineKeyboardButton("Operação contínua", callback_data="funcionamento_Operação_contínua"),
+        InlineKeyboardButton("Falta de energia", callback_data="funcionamento_Falta_de_energia")
+    )
+    
+    # Adiciona "Geral" em uma linha própria
+    buttons.add(InlineKeyboardButton("Geral", callback_data="funcionamento_Geral"))
+    
+    # Define a largura como 3 botões por linha e adiciona os botões "Agrogera"
+    agrogera_buttons = InlineKeyboardMarkup(row_width=3)
+    agrogera_buttons.add(
+        InlineKeyboardButton("Agrogera GO", callback_data="funcionamento_Agrogera_GO"),
+        InlineKeyboardButton("Agrogera MG", callback_data="funcionamento_Agrogera_MG"),
+        InlineKeyboardButton("Agrogera BA", callback_data="funcionamento_Agrogera_BA")
+    )
+    
+    # Adiciona os botões "Agrogera" ao teclado principal
+    buttons.inline_keyboard.extend(agrogera_buttons.inline_keyboard)
+    
+    return buttons
+
+# Handler para o comando /relatorio
+@dp.message_handler(commands=['relatorio'])
+async def send_welcome(message: types.Message):
+    await message.reply("Escolha o período do relatório:", reply_markup=create_period_buttons())
+
+# Callback query para o período
+@dp.callback_query_handler(lambda c: c.data.startswith('period_'))
+async def handle_period_selection(callback_query: types.CallbackQuery):
+    period_label = callback_query.data.replace("period_", "")
+    period = period_map.get(period_label)
+    period_number = int(period.split()[0])  # Isso extrai o número '2' de '2 dias'
+
+    if not period:
+        await callback_query.message.reply("Período inválido selecionado.")
+        return
+
+    user_id = callback_query.from_user.id
+    user_reports[user_id] = {"period": period_number}
+
+    # Apagar os botões de período
+#    await bot.edit_message_reply_markup(callback_query.message.chat.id, callback_query.message.message_id, reply_markup=None)
+    await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+
+    # Mostrar botões de funcionamento
+    await bot.send_message(callback_query.message.chat.id, "Selecione o tipo de funcionamento:", reply_markup=create_funcionamento_buttons())
+
+
+# Callback query para o funcionamento
+
+# Callback query para o funcionamento
+@dp.callback_query_handler(lambda c: c.data.startswith('funcionamento_'))
+async def handle_funcionamento_selection(callback_query: types.CallbackQuery):
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+    funcionamento_label = callback_query.data.replace("funcionamento_", "")
+    funcionamento_label = funcionamento_label.replace("_", " ")
+
+    funcionamento = funcionamento_map[funcionamento_label]
+    user_id = callback_query.from_user.id
+    user_reports[user_id]["funcionamento"] = funcionamento
+    id_grupo = global_vars["id_grupo"]
+    nome_usuario = ''
+    period = user_reports[user_id]["period"]
+    
+    global_vars["period"] = period
+    global_vars["funcionamento"] = funcionamento
+    global_vars["user_id"] = user_id
+
+    await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+
+    await bot.send_message(callback_query.message.chat.id,f"Você escolheu o funcionamento: {funcionamento_label}. Aguarde enquanto buscamos os dados...")
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:   
+            await cursor.execute("SELECT nome_telegram FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (user_id,))
+            result = await cursor.fetchone()
+            if not result:
+                return await bot.send_message(callback_query.message.chat.id,"Usuário não encontrado.")
+            
+            nome_usuario = result[0]
+            global_vars["nome_usuario"] = nome_usuario
+
+            global_vars["mensagem"] = f'Usuário {nome_usuario} pediu funcionamento: {funcionamento_label} para {period} dias.'
+            print(global_vars["mensagem"])
+            await listar_tarefas_ativas()
+            try:
+                await bot.send_message(id_grupo, global_vars["mensagem"])
+            except Exception as e:
+                await bot.send_message(callback_query.message.chat.id,f"Erro ao enviar mensagem ao grupo: {e}")
+            sys.stdout.flush()
+
+    # Buscar os dados do relatório
+    try:
+        report_data = await fetch_report_data(pool, period, user_id, funcionamento)
+    finally:
+        # pool.close()
+        # await pool.wait_closed()
+        pass
+
+    if not report_data or report_data[0] == ["Nenhum dado encontrado para o período selecionado."]:
+        await bot.send_message(callback_query.message.chat.id,"Nenhum dado encontrado para o funcionamento selecionado.")
+        await bot.send_message(callback_query.message.chat.id,"Escolha o período do relatório novamente:", reply_markup=create_period_buttons())
+    else:
+        telegram_report, detailed_report, dados_gemini = report_data
+
+        user_reports[user_id] = (detailed_report, period, funcionamento, dados_gemini)
+
+        # Criar e enviar o PDF diretamente sem botão
+        pdf_filename = f"relatorio_{funcionamento}_{period}_dias.pdf"
+        pdf_file_path = await create_pdf(detailed_report, dados_gemini, period, funcionamento, pdf_filename)
+        global_vars["pdf_file_path"] = pdf_file_path
+        await bot.send_document(chat_id=callback_query.message.chat.id, document=InputFile(pdf_file_path, filename=pdf_filename))
+
+        global_vars["mensagem2"] = f'Usuário {nome_usuario} completou o pedido do PDF.'
+        print(global_vars["mensagem2"])
+
+        try:
+            await bot.send_message(id_grupo, global_vars["mensagem2"])
+        except Exception as e:
+            await bot.send_message(callback_query.message.chat.id,f"Erro ao enviar mensagem ao grupo: {e}")
+        sys.stdout.flush()
+
+        # Solicitar email do usuário
+        email_button = InlineKeyboardMarkup().add(InlineKeyboardButton("Receber PDF por Email", callback_data="request_email"))
+        await bot.send_message(callback_query.message.chat.id,"Deseja receber o PDF por email?", reply_markup=email_button)
+
+
+
+
+# Handler to manage email request
+@dp.callback_query_handler(lambda c: c.data == 'request_email')
+async def handle_request_email(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT email FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (user_id,))
+                result = await cursor.fetchone()
+                if result and result[0]:
+                    email = result[0]
+                    email_buttons = InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("Sim", callback_data="send_to_existing_email"),
+                        InlineKeyboardButton("Não", callback_data="request_new_email")
+                    )
+                    await bot.send_message(user_id, f"O email cadastrado é {email}. Deseja enviar para este email?", reply_markup=email_buttons)
+                else:
+                    await bot.send_message(user_id, "Por favor, digite o email para enviar o PDF:")
+                await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+    except Exception as e:
+        await bot.send_message(user_id, f"Erro ao verificar o email: {str(e)}")
+        logger.error(f"Error in handle_request_email: {str(e)}")
+    finally:
+        # pool.close()
+        # await pool.wait_closed()
+        pass
+    
+# Handler to send to existing email
+@dp.callback_query_handler(lambda c: c.data == 'send_to_existing_email')
+async def handle_send_to_existing_email(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+    await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT email FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (user_id,))
+                result = await cursor.fetchone()
+                if result and result[0]:
+                    email = result[0]
+                    detailed_report, period, funcionamento, dados_gemini = user_reports[user_id]
+                    pdf_filename = f"relatorio_{funcionamento}_{period}_dias.pdf"
+                    pdf_file_path = await create_pdf(detailed_report, dados_gemini, period, funcionamento, pdf_filename)
+                    await send_email(email, pdf_file_path, pdf_filename)
+                #    await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+                    await bot.send_message(user_id, f"PDF enviado para o email {email} com sucesso.")
+                else:
+                    await bot.send_message(user_id, "Email não encontrado. Por favor, digite o email para enviar o PDF.")
+    except Exception as e:
+        await bot.send_message(user_id, f"Erro ao enviar o PDF: {str(e)}")
+        logger.error(f"Error in handle_send_to_existing_email: {str(e)}")
+    finally:
+        # pool.close()
+        # await pool.wait_closed()
+        pass
+
+
+
+# Handler to request new email
+@dp.callback_query_handler(lambda c: c.data == 'request_new_email')
+async def handle_request_new_email(callback_query: types.CallbackQuery):
+    await bot.send_message(callback_query.from_user.id, "Por favor, digite o novo email para enviar o PDF:")
+    await callback_query.answer()
+
+@dp.message_handler(lambda message: '@' in message.text)
+async def handle_email_input(message: types.Message):
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+    user_id = message.from_user.id
+    if user_id in user_reports:
+        try:
+            to_email = message.text
+            detailed_report, period, funcionamento, dados_gemini = user_reports[user_id]
+            pdf_filename = f"relatorio_{funcionamento}_{period}_dias.pdf"
+            pdf_file_path = await create_pdf(detailed_report, dados_gemini, period, funcionamento, pdf_filename)
+            await send_email(to_email, pdf_file_path, pdf_filename)
+        #    await message.reply(f"PDF enviado para o email {to_email} com sucesso.", reply_markup=main_keyboard)
+            await message.bot.send_message(user_id, f"PDF enviado para o email {to_email} com sucesso.")
+            os.remove(pdf_file_path)  # Remover o PDF após o envio por email
+
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                        UPDATE machine_learning.usuarios_telegram
+                        SET email = %s
+                        WHERE id_telegram = %s
+                    """, (to_email, user_id))
+                    await conn.commit()
+
+        except Exception as e:
+            await message.reply(f"Erro ao enviar o PDF por email: {str(e)}")
+            logger.error(f"Error in handle_email_input: {str(e)}")
+
+
+'''
+@dp.message_handler(lambda message: message.text in ["1 dia", "2 dias", "7 dias", "15 dias", "1 mês"])
+async def handle_report_period(message: types.Message):
+    try:
+        period_map = {
+            "1 dia": 1,
+            "2 dias": 2,
+            "7 dias": 7,
+            "15 dias": 15,
+            "1 mês": 30
+        }
+        period = period_map[message.text]
+        user_id = message.from_user.id
+        user_reports[user_id] = {"period": period}
+        await message.reply("Selecione o tipo de funcionamento:", reply_markup=funcionamento_keyboard)
+    except Exception as e:
+        await message.reply(f"Ocorreu um erro ao selecionar o período: {str(e)}")
+
+
+
 @dp.message_handler(lambda message: message.text in funcionamento_map.keys())
 async def handle_funcionamento_selection(message: types.Message):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     try:
         funcionamento = funcionamento_map[message.text]
         user_id = message.from_user.id
@@ -1624,8 +1911,8 @@ async def handle_funcionamento_selection(message: types.Message):
         try:
             report_data = await fetch_report_data(pool, period, user_id, funcionamento)
         finally:
-            # pool.close()
-            # await pool.wait_closed()
+            pool.close()
+            await pool.wait_closed()
             pass
 
         if not report_data or report_data[0] == ["Nenhum dado encontrado para o período selecionado."]:
@@ -1665,7 +1952,7 @@ async def handle_funcionamento_selection(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == 'request_email')
 async def handle_request_email(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     try:
         async with pool.acquire() as conn:
@@ -1693,7 +1980,7 @@ async def handle_request_email(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == 'send_to_existing_email')
 async def handle_send_to_existing_email(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     try:
         async with pool.acquire() as conn:
@@ -1726,7 +2013,7 @@ async def handle_request_new_email(callback_query: types.CallbackQuery):
 
 @dp.message_handler(lambda message: '@' in message.text)
 async def handle_email_input(message: types.Message):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     user_id = message.from_user.id
     if user_id in user_reports:
         try:
@@ -1751,7 +2038,37 @@ async def handle_email_input(message: types.Message):
             await message.reply(f"Erro ao enviar o PDF por email: {str(e)}")
             logger.error(f"Error in handle_email_input: {str(e)}")
 
+'''
 
+
+
+'''
+async def send_email(to_email, pdf_file_path, filename):
+    message = MIMEMultipart()
+    message["From"] = "workflow@brggeradores.com.br"
+    message["To"] = to_email
+    message["Subject"] = "Relatório de previsões"
+
+    body = "Segue em anexo o relatório em PDF."
+    message.attach(MIMEText(body, "plain"))
+
+    with open(pdf_file_path, "rb") as attachment:
+        part = MIMEApplication(attachment.read(), _subtype="pdf")
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        message.attach(part)
+
+    try:
+        await aiosmtplib.send(
+            message,
+            hostname="smtp.office365.com",
+            port=587,
+            username="workflow@brggeradores.com.br",
+            password="r136789h#",
+            use_tls=False
+        )
+    except Exception as e:
+        logger.error(f"Error in send_email: {str(e)}")
+'''
 
 async def send_email(to_email, pdf_file_path, filename):
     message = MIMEMultipart()
@@ -1780,11 +2097,12 @@ async def send_email(to_email, pdf_file_path, filename):
         logger.error(f"Error in send_email: {str(e)}")
 
     # Delete the PDF file after sending the email
-    try:
-        os.remove(pdf_file_path)
-        logger.info(f"Deleted PDF file: {pdf_file_path}")
-    except Exception as e:
-        logger.error(f"Error deleting PDF file: {str(e)}")
+    # try:
+    #     os.remove(pdf_file_path)
+    #     logger.info(f"Deleted PDF file: {pdf_file_path}")
+    # except Exception as e:
+    #     logger.error(f"Error deleting PDF file: {str(e)}")
+
 
 
 
@@ -2933,7 +3251,7 @@ async def id_chat_usuario(username, pool):
 
         
 # async def enviar_menu_grupo(chat_id):
-#     pool = await create_pool()
+#     pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 #     async with pool.acquire() as conn:
 #         async with conn.cursor() as cursor:
 #             await cursor.execute("SELECT usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
@@ -2965,7 +3283,7 @@ async def id_chat_usuario(username, pool):
 #     return teclado_menu
 
 async def enviar_menu_grupo(chat_id, state: FSMContext):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("SELECT usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
@@ -2991,15 +3309,15 @@ async def send_menu(chat_id, user_type, state: FSMContext):
     
     if user_type == 'Grupo':
         buttons = [
-            InlineKeyboardButton("Digitar cod_usina", callback_data='1'),
-            InlineKeyboardButton("Digitar cod_equipamento", callback_data='2'),
+            InlineKeyboardButton("Digitar código da usina", callback_data='1'),
+            InlineKeyboardButton("Digitar código do equipamento", callback_data='2'),
             InlineKeyboardButton("Inserir usuario", callback_data='3'),
             InlineKeyboardButton("Editar usuario ativo", callback_data='4'),
         ]
     else:
         buttons = [
-            InlineKeyboardButton("Digitar cod_usina", callback_data='1'),
-            InlineKeyboardButton("Digitar cod_equipamento", callback_data='2'),
+            InlineKeyboardButton("Digitar código da usina", callback_data='1'),
+            InlineKeyboardButton("Digitar código do equipamento", callback_data='2'),
             InlineKeyboardButton("Editar Usinas cadastradas", callback_data='5'),
             InlineKeyboardButton("Receber todos os tipos de notificações", callback_data='6'),
         ]
@@ -3011,7 +3329,8 @@ async def send_menu(chat_id, user_type, state: FSMContext):
     await state.update_data(menu_message_id=sent_message.message_id)
 
 async def criar_menu():
-    menu_button = types.KeyboardButton('Menu')
+#    menu_button = types.KeyboardButton('Menu')
+    menu_button = types.KeyboardButton('/menu')
     teclado_menu = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
     teclado_menu.add(menu_button)
     return teclado_menu
@@ -3019,13 +3338,14 @@ async def criar_menu():
 
 
 
-@dp.message_handler(lambda message: message.text == "Geradores Em Operação")
+#@dp.message_handler(lambda message: message.text == "Geradores Em Operação")
+@dp.message_handler(lambda message: message.text == "/geradores")
 async def teste_menu(message: types.Message):
     print('*****************************************************************************************************************')
     tempo_inicial = datetime.now()
     data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
     print('clicou no teste', data_cadastro_formatada)
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     if message.from_user.id:
         user_id = message.from_user.id
@@ -3157,7 +3477,7 @@ async def teste_menu(message: types.Message):
 #     print('clicou no /Menu',chat_id)
 #     await enviar_menu_grupo(chat_id)
 
-@dp.message_handler(lambda message: message.text == "Menu", state='*')
+@dp.message_handler(lambda message: message.text == "/menu", state='*')
 async def Menu(message: types.Message, state: FSMContext):
     chat_id = message.chat.id
     print('clicou no Menu', chat_id)
@@ -3173,7 +3493,7 @@ class Form(StatesGroup):
     editar_usinas = State()
 
 async def salvar_silenciamento(cod_usuario, cod_equipamento, tempo_silenciado):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("""
@@ -3194,7 +3514,7 @@ async def salvar_silenciamento(cod_usuario, cod_equipamento, tempo_silenciado):
             await conn.commit()
 
 async def buscar_cod_usuario(id_telegram):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("""
@@ -3204,7 +3524,7 @@ async def buscar_cod_usuario(id_telegram):
             return result[0] if result else None
 
 async def buscar_cod_equipamentos(cod_usina):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("""
@@ -3215,7 +3535,7 @@ async def buscar_cod_equipamentos(cod_usina):
 
 
 async def buscar_equipamentos_com_alerta(cod_usina):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("""
@@ -3245,7 +3565,7 @@ async def buscar_alarmes_ativos(conn, cod_equipamento):
     return result
 
 async def enviar_alarme_botao(cod_usina, query_user_id):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     cod_usuario = await buscar_cod_usuario(query_user_id)
     id_telegram = query_user_id
     
@@ -3341,7 +3661,7 @@ async def enviar_alarme_botao(cod_usina, query_user_id):
                     if result is not None:
                         nome, cod_usina, cod_usuario = result
                             
-                    mensagem = f"🚨 Nenhum alarme encontrado para o equipamento {cod_equipamento} - {nome}"
+                    mensagem = f"🚨 Nenhum alarme encontrado para o equipamento {cod_equipamento} - {nome}, ou o alarme tem mais de 6 horas ativo"
                     print( f"🚨 Nenhum alarme encontrado para o equipamento {cod_equipamento} - {nome}")
                     await bot.send_message(id_telegram, mensagem, parse_mode='HTML')
 
@@ -3356,7 +3676,7 @@ async def enviar_alarme_botao(cod_usina, query_user_id):
 
 
 async def verificar_alarmes(pool):
-#    pool = await create_pool()
+#    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     while True:
         try:
             async with pool.acquire() as conn:
@@ -3435,7 +3755,735 @@ async def verificar_alarmes(pool):
             await asyncio.sleep(120)
 
 
+
+'''
+async def monitorar_leituras_consecutivas(pool):
+    equipamentos_com_alerta = {}
+    # Dicionário para armazenar alarmes e cod_equipamento
+    equipamentos_alerta_0 = {}
+
+    while True:
+
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                    SELECT cod_equipamento, cod_campo, alerta, valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas
+                    """)
+                    leituras = await cursor.fetchall()
+                    for leitura in leituras:
+                        try:
+                            cod_equipamento, cod_campo, alerta, valor_1, valor_2, valor_3, valor_4, valor_5 = leitura
+
+                            if alerta == 1:
+                                tempo_inicial = datetime.now()
+                                data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+
+                                if cod_equipamento not in equipamentos_com_alerta:
+                                    equipamentos_com_alerta[cod_equipamento] = datetime.now()
+                                    print('Alerta ativado para o equipamento', cod_equipamento,data_cadastro_formatada,'\n')
+                                #    print('equipamentos_com_alerta',equipamentos_com_alerta)
+                                    agora = datetime.now()
+
+                                    # Consulta para obter o código da usina associada ao equipamento
+                                    await cursor.execute("""
+                                        SELECT cod_usina FROM sup_geral.equipamentos
+                                        WHERE codigo = %s
+                                    """, (cod_equipamento,))
+                                    result = await cursor.fetchone()
+
+                                    if result is not None:
+                                        cod_usina = result[0]
+
+                                    await cursor.execute("""
+                                        SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                        FROM machine_learning.relatorio_quebras 
+                                        WHERE cod_equipamento = %s
+                                        ORDER BY data_cadastro_previsto DESC 
+                                        LIMIT 1
+                                    """, (cod_equipamento,))
+                                    result = await cursor.fetchone()
+
+                                    if result is not None:
+                                        tempo_inicial = datetime.now()
+                                        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+            
+                                        ultima_data_prevista, ultima_data_cadastro_quebra = result
+                                        if ultima_data_prevista and ultima_data_cadastro_quebra:
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.relatorio_quebras 
+                                                (cod_equipamento, cod_usina, data_cadastro_previsto) 
+                                                VALUES (%s, %s, NOW())
+                                            """, (cod_equipamento, cod_usina))
+                                            await conn.commit()
+                                            
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.log_relatorio_quebras 
+                                                (cod_equipamento, cod_usina, data_cadastro_previsto) 
+                                                VALUES (%s, %s, NOW())
+                                            """, (cod_equipamento, cod_usina))
+                                            await conn.commit()
+                                            print(f'Nova entrada 1 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                        elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
+                                            await cursor.execute("""
+                                                UPDATE machine_learning.relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                            """, (datetime.now(), cod_equipamento))
+                                            await conn.commit()
+                                        #    print(f'Atualização no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                            
+                                            await cursor.execute("""
+                                                UPDATE machine_learning.log_relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                            """, (datetime.now(), cod_equipamento))
+                                            await conn.commit()
+                                            print(f'Atualização 2 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                                                                    
+                                        elif (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) >= timedelta(hours=6)) or (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=1)):
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                VALUES (%s, %s, NULL, NOW())
+                                            """, (cod_equipamento,cod_usina))
+                                            await conn.commit()
+                                        #    print(f'Nova entrada no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                VALUES (%s, %s, NULL, NOW())
+                                            """, (cod_equipamento,cod_usina))
+                                            await conn.commit()
+                                            print(f'Nova entrada 3 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                                                                    
+                                        else:
+                                            print(f'Nenhuma entrada adicionada ao relatório de quebras e de log para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                    else:
+                                        # Não há linha existente para o equipamento, então podemos criar uma nova linha
+                                        await cursor.execute("""
+                                            INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                            VALUES (%s, %s, NULL, NOW())
+                                        """, (cod_equipamento,cod_usina))
+                                        await conn.commit()
+
+                                        await cursor.execute("""
+                                            INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                            VALUES (%s, %s, NULL, NOW())
+                                        """, (cod_equipamento,cod_usina))
+                                        await conn.commit()
+                                        print(f'Nova entrada 4 no relatório quebras e de log quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                if cod_equipamento in equipamentos_com_alerta:
+                                    # Verifica se já está no dicionário, senão adiciona
+                                    if cod_equipamento not in equipamentos_alerta_0:
+                                        tempo_inicial = datetime.now()
+                                        await cursor.execute("""
+                                            SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                        """, (cod_equipamento,))
+                                        alarmes_ativos = await cursor.fetchall()
+
+                                        # Adiciona alarmes ativos ao dicionário
+                                        equipamentos_alerta_0[cod_equipamento] = {
+                                            'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                            'tempo_alerta_0': tempo_inicial
+                                        }
+                                        print(f"Equipamento {cod_equipamento} com alerta em 1 adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                    else:
+                                        # Atualiza apenas com novos alarmes, mantendo os antigos
+                                        await cursor.execute("""
+                                            SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                        """, (cod_equipamento,))
+                                        alarmes_ativos = await cursor.fetchall()
+
+                                        # Mantém os alarmes existentes
+                                        alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                        # Verifica se há novos alarmes, para adicionar apenas os novos
+                                        novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                        if novos_alarmes:
+                                            # Adiciona os novos alarmes à lista de alarmes existentes
+                                            equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                            equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                            print(f"Equipamento {cod_equipamento} com alerta em 1 atualizado com novos alarmes {novos_alarmes}")
+                                        else:
+                                            print(f"Equipamento {cod_equipamento} com alerta em 1 não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+
+
+                            elif alerta == 0:
+                                if cod_equipamento in equipamentos_com_alerta:
+#                                    if cod_campo == 114 and all(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se todos os valores forem 0
+                                    if cod_campo == 114 and any(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se algum valor for 0
+
+                                        # Verifica se já está no dicionário, senão adiciona
+                                        if cod_equipamento not in equipamentos_alerta_0:
+                                            tempo_inicial = datetime.now()
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Adiciona alarmes ativos ao dicionário
+                                            equipamentos_alerta_0[cod_equipamento] = {
+                                                'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                                'tempo_alerta_0': tempo_inicial
+                                            }
+                                            print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                        else:
+                                            # Atualiza apenas com novos alarmes, mantendo os antigos
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Mantém os alarmes existentes
+                                            alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                            # Verifica se há novos alarmes, para adicionar apenas os novos
+                                            novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                            if novos_alarmes:
+                                                # Adiciona os novos alarmes à lista de alarmes existentes
+                                                equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                                equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                                print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados atualizado com novos alarmes {novos_alarmes}")
+                                            else:
+                                                print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+
+                                        
+
+                                    if cod_campo == 114 and all(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se todos os valores forem 0
+#                                    if cod_campo == 114 and any(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se algum valor for 0
+
+                                        # Verifica se já está no dicionário, senão adiciona
+                                        if cod_equipamento not in equipamentos_alerta_0:
+                                            tempo_inicial = datetime.now()
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Adiciona alarmes ativos ao dicionário
+                                            equipamentos_alerta_0[cod_equipamento] = {
+                                                'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                                'tempo_alerta_0': tempo_inicial
+                                            }
+                                            print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                        else:
+                                            # Atualiza apenas com novos alarmes, mantendo os antigos
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Mantém os alarmes existentes
+                                            alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                            # Verifica se há novos alarmes, para adicionar apenas os novos
+                                            novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                            if novos_alarmes:
+                                                # Adiciona os novos alarmes à lista de alarmes existentes
+                                                equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                                equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                                print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados atualizado com novos alarmes {novos_alarmes}")
+                                            else:
+                                                print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+
+
+                                        
+                                        print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 1 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+                                        if alarmes_ativos:  # Verifica se há algum alarme em alarmes_ativos
+                                            print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 2',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+                                            for codigo_alarme in codigos_alarmes_desejados:
+                                                if any(codigo_alarme in [alarme[0] for alarme in alarmes_ativos] for codigo_alarme in codigos_alarmes_desejados):
+                                                    tempo_decorrido = datetime.now() - equipamentos_com_alerta[cod_equipamento]
+                                                    await cursor.execute("""
+                                                        SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                        FROM machine_learning.relatorio_quebras 
+                                                        WHERE cod_equipamento = %s
+                                                        ORDER BY id DESC 
+                                                        LIMIT 1
+                                                    """, (cod_equipamento,))
+                                                    data_cadastro_previsto, data_cadastro_quebra = await cursor.fetchone()
+                                                    print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 3 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos,'tempo_decorrido',tempo_decorrido)
+
+                                                    if data_cadastro_quebra is None:
+                                                        print(cod_equipamento,' - data_cadastro_quebra e none',data_cadastro_quebra,'data_cadastro_previsto',data_cadastro_previsto, 'tempo dentro do proximo loop - ',datetime.now() - data_cadastro_previsto)
+                                                        tempo_inicial = datetime.now()
+                                                        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+
+                                                        if data_cadastro_previsto and (datetime.now() - data_cadastro_previsto) <= timedelta(hours=24):
+                                                            await cursor.execute("""
+                                                                UPDATE machine_learning.relatorio_quebras SET data_cadastro_quebra = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                                            """, (datetime.now(), cod_equipamento))
+                                                            await conn.commit()
+
+                                                            await cursor.execute("""
+                                                                UPDATE machine_learning.log_relatorio_quebras SET data_cadastro_quebra = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                                            """, (datetime.now(), cod_equipamento))
+                                                            await conn.commit()
+                                                            del equipamentos_com_alerta[cod_equipamento]
+                                                            del equipamentos_alerta_0[cod_equipamento]
+                                                            print(f"Atualização do 5 registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
+
+                                                        else:
+                                                            await cursor.execute("""
+                                                                INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                                VALUES (%s, %s, NULL, NOW())
+                                                            """, (cod_equipamento,cod_usina))
+                                                            await conn.commit()
+
+                                                            await cursor.execute("""
+                                                                INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                                VALUES (%s, %s, NULL, NOW())
+                                                            """, (cod_equipamento,cod_usina))
+                                                            await conn.commit()
+                                                            print(f"Inserção 6 de novo registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                            del equipamentos_com_alerta[cod_equipamento]
+                                                            del equipamentos_alerta_0[cod_equipamento]
+                                                    else:
+                                                        print(cod_equipamento,' - data_cadastro_quebra nao e none',data_cadastro_quebra,'data_cadastro_previsto',data_cadastro_previsto, 'tempo dentro do proximo loop - ',datetime.now() - data_cadastro_previsto)
+                                                
+                                                
+                                                if not any(codigo_alarme in [alarme[0] for alarme in alarmes_ativos] for codigo_alarme in codigos_alarmes_desejados):
+                                            #    else:
+                                                #    print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 7 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+                                                    await cursor.execute("""
+                                                        SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                        FROM machine_learning.relatorio_quebras 
+                                                        WHERE cod_equipamento = %s
+                                                        ORDER BY data_cadastro_previsto DESC 
+                                                        LIMIT 1
+                                                    """, (cod_equipamento,))
+                                                    result = await cursor.fetchall()
+                                                    if result:
+                                                        for data_cadastro_previsto, data_cadastro_quebra in result:
+                                                            if data_cadastro_quebra is None:
+                                                    #            if data_cadastro_previsto and (datetime.now() - data_cadastro_previsto) > timedelta(hours=12):
+                                                                await cursor.execute("""
+                                                                    DELETE FROM machine_learning.relatorio_quebras WHERE cod_equipamento = %s
+                                                                """, (cod_equipamento,))
+                                                                await conn.commit()
+                                                                tempo_inicial = datetime.now()
+                                                                data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+                                                                print(f"Remoção 8 da linha da tabela de relatório de quebras para o equipamento sem alarme {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                                del equipamentos_com_alerta[cod_equipamento]
+                                                                del equipamentos_alerta_0[cod_equipamento]
+                                                                
+
+                                            if not codigo_alarme in codigos_alarmes_desejados:
+                                                print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 9 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+                                                await cursor.execute("""
+                                                    SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                    FROM machine_learning.relatorio_quebras 
+                                                    WHERE cod_equipamento = %s
+                                                    ORDER BY data_cadastro_previsto DESC 
+                                                    LIMIT 1
+                                                """, (cod_equipamento,))
+                                                result = await cursor.fetchall()
+                                                if result:
+                                                    for data_cadastro_previsto, data_cadastro_quebra in result:
+                                                        if data_cadastro_quebra is None:
+                                                        #    if data_cadastro_previsto and (datetime.now() - data_cadastro_previsto) > timedelta(hours=12):
+                                                            await cursor.execute("""
+                                                                DELETE FROM machine_learning.relatorio_quebras WHERE cod_equipamento = %s
+                                                            """, (cod_equipamento,))
+                                                            await conn.commit()
+                                                            tempo_inicial = datetime.now()
+                                                            data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+                                                            print(f"Remoção 10 da linha da tabela de relatório de quebras para o equipamento sem alarme {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                            del equipamentos_com_alerta[cod_equipamento]
+                                                            del equipamentos_alerta_0[cod_equipamento]
+                                                else:
+                                                    print('sem resultado de pesquisa 2')
+
+                                        elif not alarmes_ativos:
+                                            print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 5 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+                                            await cursor.execute("""
+                                                SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                FROM machine_learning.relatorio_quebras 
+                                                WHERE cod_equipamento = %s
+                                                ORDER BY data_cadastro_previsto DESC 
+                                                LIMIT 1
+                                            """, (cod_equipamento,))
+                                            result = await cursor.fetchall()
+                                            if result:
+                                                for data_cadastro_previsto, data_cadastro_quebra in result:
+                                                    if data_cadastro_quebra is None:
+                                                        await cursor.execute("""
+                                                            DELETE FROM machine_learning.relatorio_quebras WHERE cod_equipamento = %s
+                                                        """, (cod_equipamento,))
+                                                        await conn.commit()
+                                                        tempo_inicial = datetime.now()
+                                                        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+                                                        print(f"Remoção 11 da linha da tabela de relatório de quebras para o equipamento sem alarme {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                        del equipamentos_com_alerta[cod_equipamento]
+                                                        del equipamentos_alerta_0[cod_equipamento]
+                                                    else:
+                                                        pass
+                                                else:
+                                                    print('sem resultado de pesquisa 3')
+
+                        except Exception as e:
+                            print(f"Erro ao processar leitura para o equipamento {leitura[0]}: {e}")
+
+        except aiomysql.Error as e:
+            print(f"Erro de conexão com o banco de dados: {e}")
+            await asyncio.sleep(10)  # Espera 10 segundos antes de tentar reconectar
+
+        await asyncio.sleep(60)
+
+        
+
+
+'''
+
+
+
 codigos_alarmes_desejados = [1, 243, 244, 253, 256, 259, 262,265,269,272,273,279,280,281,301,304,350, 351, 352, 353, 356, 357, 381, 383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405,411,412,413,414,415,416, 471, 472, 473,528, 590, 591, 592, 593, 594,595,596,597,598,599,600, 602, 603, 604, 611,615,616,617,631, 635, 637, 638, 657, 658,669,678, 725, 727, 728, 729, 730, 731, 732, 735]
+
+
+
+
+async def monitorar_leituras_consecutivas(pool):
+    equipamentos_com_alerta = {}
+    # Dicionário para armazenar alarmes e cod_equipamento
+    equipamentos_alerta_0 = {}
+
+    while True:
+
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                    SELECT cod_equipamento, cod_campo, alerta, valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas
+                    """)
+                    leituras = await cursor.fetchall()
+                    for leitura in leituras:
+                        try:
+                            cod_equipamento, cod_campo, alerta, valor_1, valor_2, valor_3, valor_4, valor_5 = leitura
+
+                            if alerta == 1:
+                                tempo_inicial = datetime.now()
+                                data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+
+                                if cod_equipamento not in equipamentos_com_alerta:
+                                    equipamentos_com_alerta[cod_equipamento] = datetime.now()
+                                    print('Alerta ativado para o equipamento', cod_equipamento,data_cadastro_formatada,'\n')
+                                #    print('equipamentos_com_alerta',equipamentos_com_alerta)
+                                    agora = datetime.now()
+
+                                    # Consulta para obter o código da usina associada ao equipamento
+                                    await cursor.execute("""
+                                        SELECT cod_usina FROM sup_geral.equipamentos
+                                        WHERE codigo = %s
+                                    """, (cod_equipamento,))
+                                    result = await cursor.fetchone()
+
+                                    if result is not None:
+                                        cod_usina = result[0]
+
+                                    await cursor.execute("""
+                                        SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                        FROM machine_learning.relatorio_quebras 
+                                        WHERE cod_equipamento = %s
+                                        ORDER BY data_cadastro_previsto DESC 
+                                        LIMIT 1
+                                    """, (cod_equipamento,))
+                                    result = await cursor.fetchone()
+
+                                    if result is not None:
+                                        tempo_inicial = datetime.now()
+                                        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+            
+                                        ultima_data_prevista, ultima_data_cadastro_quebra = result
+                                        if ultima_data_prevista and ultima_data_cadastro_quebra:
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.relatorio_quebras 
+                                                (cod_equipamento, cod_usina, data_cadastro_previsto) 
+                                                VALUES (%s, %s, NOW())
+                                            """, (cod_equipamento, cod_usina))
+                                            await conn.commit()
+                                            
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.log_relatorio_quebras 
+                                                (cod_equipamento, cod_usina, data_cadastro_previsto) 
+                                                VALUES (%s, %s, NOW())
+                                            """, (cod_equipamento, cod_usina))
+                                            await conn.commit()
+                                            print(f'Nova entrada 1 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                        elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
+                                            await cursor.execute("""
+                                                UPDATE machine_learning.relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                            """, (datetime.now(), cod_equipamento))
+                                            await conn.commit()
+                                        #    print(f'Atualização no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                            
+                                            await cursor.execute("""
+                                                UPDATE machine_learning.log_relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                            """, (datetime.now(), cod_equipamento))
+                                            await conn.commit()
+                                            print(f'Atualização 2 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                                                                    
+                                        elif (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) >= timedelta(hours=6)) or (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=1)):
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                VALUES (%s, %s, NULL, NOW())
+                                            """, (cod_equipamento,cod_usina))
+                                            await conn.commit()
+                                        #    print(f'Nova entrada no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                            await cursor.execute("""
+                                                INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                VALUES (%s, %s, NULL, NOW())
+                                            """, (cod_equipamento,cod_usina))
+                                            await conn.commit()
+                                            print(f'Nova entrada 3 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                                                                    
+                                        else:
+                                            print(f'Nenhuma entrada adicionada ao relatório de quebras e de log para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                    else:
+                                        # Não há linha existente para o equipamento, então podemos criar uma nova linha
+                                        await cursor.execute("""
+                                            INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                            VALUES (%s, %s, NULL, NOW())
+                                        """, (cod_equipamento,cod_usina))
+                                        await conn.commit()
+
+                                        await cursor.execute("""
+                                            INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                            VALUES (%s, %s, NULL, NOW())
+                                        """, (cod_equipamento,cod_usina))
+                                        await conn.commit()
+                                        print(f'Nova entrada 4 no relatório quebras e de log quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+
+                                if cod_equipamento in equipamentos_com_alerta:
+                                    # Verifica se já está no dicionário, senão adiciona
+                                    if cod_equipamento not in equipamentos_alerta_0:
+                                        tempo_inicial = datetime.now()
+                                        await cursor.execute("""
+                                            SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                        """, (cod_equipamento,))
+                                        alarmes_ativos = await cursor.fetchall()
+
+                                        # Adiciona alarmes ativos ao dicionário
+                                        equipamentos_alerta_0[cod_equipamento] = {
+                                            'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                            'tempo_alerta_0': tempo_inicial
+                                        }
+                                        print(f"Equipamento {cod_equipamento} com alerta em 1 adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                    else:
+                                        # Atualiza apenas com novos alarmes, mantendo os antigos
+                                        await cursor.execute("""
+                                            SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                        """, (cod_equipamento,))
+                                        alarmes_ativos = await cursor.fetchall()
+
+                                        # Mantém os alarmes existentes
+                                        alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                        # Verifica se há novos alarmes, para adicionar apenas os novos
+                                        novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                        if novos_alarmes:
+                                            # Adiciona os novos alarmes à lista de alarmes existentes
+                                            equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                            equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                            print(f"Equipamento {cod_equipamento} com alerta em 1 atualizado com novos alarmes {novos_alarmes}")
+                                        else:
+                                        #    print(f"Equipamento {cod_equipamento} com alerta em 1 não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+                                            pass
+
+                            elif alerta == 0:
+                                if cod_equipamento in equipamentos_com_alerta:
+                                    
+                                    # if cod_campo == 114 and any(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se algum valor for 0
+
+                                    #     # Verifica se já está no dicionário, senão adiciona
+                                    #     if cod_equipamento not in equipamentos_alerta_0:
+                                    #         tempo_inicial = datetime.now()
+                                    #         await cursor.execute("""
+                                    #             SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                    #         """, (cod_equipamento,))
+                                    #         alarmes_ativos = await cursor.fetchall()
+
+                                    #         # Adiciona alarmes ativos ao dicionário
+                                    #         equipamentos_alerta_0[cod_equipamento] = {
+                                    #             'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                    #             'tempo_alerta_0': tempo_inicial
+                                    #         }
+                                    #         print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                    #     else:
+                                    #         # Atualiza apenas com novos alarmes, mantendo os antigos
+                                    #         await cursor.execute("""
+                                    #             SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                    #         """, (cod_equipamento,))
+                                    #         alarmes_ativos = await cursor.fetchall()
+
+                                    #         # Mantém os alarmes existentes
+                                    #         alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                    #         # Verifica se há novos alarmes, para adicionar apenas os novos
+                                    #         novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                    #         if novos_alarmes:
+                                    #             # Adiciona os novos alarmes à lista de alarmes existentes
+                                    #             equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                    #             equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                    #             print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados atualizado com novos alarmes {novos_alarmes}")
+                                    #         else:
+                                    #             print(f"Equipamento {cod_equipamento} com alerta em 0 sem valores zerados não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+
+                                        
+
+                                    if cod_campo == 114 and all(value == 0 for value in [valor_1, valor_2, valor_3, valor_4, valor_5]): # se todos os valores forem 0
+
+                                        # Consulta para obter o código da usina associada ao equipamento
+                                        await cursor.execute("""
+                                            SELECT cod_usina FROM sup_geral.equipamentos
+                                            WHERE codigo = %s
+                                        """, (cod_equipamento,))
+                                        result = await cursor.fetchone()
+
+                                        if result is not None:
+                                            cod_usina = result[0]
+
+
+                                        # Verifica se já está no dicionário, senão adiciona
+                                        if cod_equipamento not in equipamentos_alerta_0:
+                                            tempo_inicial = datetime.now()
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Adiciona alarmes ativos ao dicionário
+                                            equipamentos_alerta_0[cod_equipamento] = {
+                                                'alarmes': [alarme[0] for alarme in alarmes_ativos],
+                                                'tempo_alerta_0': tempo_inicial
+                                            }
+                                    #        print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados adicionado ao dicionário com alarmes {equipamentos_alerta_0[cod_equipamento]['alarmes']}")
+                                        else:
+                                            # Atualiza apenas com novos alarmes, mantendo os antigos
+                                            await cursor.execute("""
+                                                SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
+                                            """, (cod_equipamento,))
+                                            alarmes_ativos = await cursor.fetchall()
+
+                                            # Mantém os alarmes existentes
+                                            alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+
+                                            # Verifica se há novos alarmes, para adicionar apenas os novos
+                                            novos_alarmes = [alarme[0] for alarme in alarmes_ativos if alarme[0] not in alarmes_existentes]
+
+                                            if novos_alarmes:
+                                                # Adiciona os novos alarmes à lista de alarmes existentes
+                                                equipamentos_alerta_0[cod_equipamento]['alarmes'].extend(novos_alarmes)
+                                                equipamentos_alerta_0[cod_equipamento]['tempo_alerta_0'] = datetime.now()
+                                    #            print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados atualizado com novos alarmes {novos_alarmes}")
+                                            else:
+                                    #            print(f"Equipamento {cod_equipamento} com alerta em 0 com valores zerados não tem novos alarmes, mantendo a lista atual {alarmes_existentes}")
+                                                pass
+
+                                    #    print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 1 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_ativos',alarmes_ativos)
+
+                                        # Verifica se algum alarme existente está dentro dos codigos_alarmes_desejados
+                                        alarmes_existentes = equipamentos_alerta_0[cod_equipamento]['alarmes']
+                                        alarmes_desejados_encontrados = [alarme for alarme in alarmes_existentes if alarme in codigos_alarmes_desejados]
+
+                                        print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 1 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_existentes',alarmes_existentes)
+
+                                        if alarmes_desejados_encontrados:
+
+                                            tempo_decorrido = datetime.now() - equipamentos_com_alerta[cod_equipamento]
+                                            await cursor.execute("""
+                                                SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                FROM machine_learning.relatorio_quebras 
+                                                WHERE cod_equipamento = %s
+                                                ORDER BY id DESC 
+                                                LIMIT 1
+                                            """, (cod_equipamento,))
+                                            data_cadastro_previsto, data_cadastro_quebra = await cursor.fetchone()
+                                            print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 3 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_existentes',alarmes_existentes,'tempo_decorrido',tempo_decorrido)
+
+                                            if data_cadastro_quebra is None:
+                                                print(cod_equipamento,' - data_cadastro_quebra e none',data_cadastro_quebra,'data_cadastro_previsto',data_cadastro_previsto, 'tempo dentro do proximo loop - ',datetime.now() - data_cadastro_previsto)
+                                                tempo_inicial = datetime.now()
+                                                data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+
+                                                if data_cadastro_previsto and (datetime.now() - data_cadastro_previsto) <= timedelta(hours=24):
+                                                    await cursor.execute("""
+                                                        UPDATE machine_learning.relatorio_quebras SET data_cadastro_quebra = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                                    """, (datetime.now(), cod_equipamento))
+                                                    await conn.commit()
+
+                                                    await cursor.execute("""
+                                                        UPDATE machine_learning.log_relatorio_quebras SET data_cadastro_quebra = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
+                                                    """, (datetime.now(), cod_equipamento))
+                                                    await conn.commit()
+                                                    del equipamentos_com_alerta[cod_equipamento]
+                                                    del equipamentos_alerta_0[cod_equipamento]
+                                                    print(f"Atualização do 5 registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
+
+                                                else:
+                                                    # await cursor.execute("""
+                                                    #     INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                    #     VALUES (%s, %s, NULL, NOW())
+                                                    # """, (cod_equipamento,cod_usina))
+                                                    # await conn.commit()
+
+                                                    # await cursor.execute("""
+                                                    #     INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                    #     VALUES (%s, %s, NULL, NOW())
+                                                    # """, (cod_equipamento,cod_usina))
+                                                    # await conn.commit()
+                                                    print(f"Inserção 6 de novo registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                    del equipamentos_com_alerta[cod_equipamento]
+                                                    del equipamentos_alerta_0[cod_equipamento]
+                                            else:
+                                                print(cod_equipamento,' - data_cadastro_quebra nao e none',data_cadastro_quebra,'data_cadastro_previsto',data_cadastro_previsto, 'tempo dentro do proximo loop - ',datetime.now() - data_cadastro_previsto)
+                                                del equipamentos_com_alerta[cod_equipamento]
+                                                del equipamentos_alerta_0[cod_equipamento]
+
+                                        elif not alarmes_desejados_encontrados:
+                                            print(cod_equipamento,'valores zerados da funcao monitorar_leituras_consecutivas 5 - ',valor_1, valor_2, valor_3, valor_4, valor_5,'alarmes_existentes',alarmes_existentes)
+                                            await cursor.execute("""
+                                                SELECT data_cadastro_previsto, data_cadastro_quebra 
+                                                FROM machine_learning.relatorio_quebras 
+                                                WHERE cod_equipamento = %s
+                                                ORDER BY data_cadastro_previsto DESC 
+                                                LIMIT 1
+                                            """, (cod_equipamento,))
+                                            result = await cursor.fetchall()
+                                            if result:
+                                                for data_cadastro_previsto, data_cadastro_quebra in result:
+                                                    if data_cadastro_quebra is None:
+                                                        await cursor.execute("""
+                                                            DELETE FROM machine_learning.relatorio_quebras WHERE cod_equipamento = %s
+                                                        """, (cod_equipamento,))
+                                                        await conn.commit()
+                                                        tempo_inicial = datetime.now()
+                                                        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+                                                        print(f"Remoção 11 da linha da tabela de relatório de quebras para o equipamento sem alarme {cod_equipamento}.",data_cadastro_formatada,'\n')
+                                                        del equipamentos_com_alerta[cod_equipamento]
+                                                        del equipamentos_alerta_0[cod_equipamento]
+                                                    else:
+                                                        pass
+                                                else:
+                                                    print('sem resultado de pesquisa 3')
+
+                        except Exception as e:
+                            print(f"Erro ao processar leitura para o equipamento {leitura[0]}: {e}")
+
+        except aiomysql.Error as e:
+            print(f"Erro de conexão com o banco de dados: {e}")
+            await asyncio.sleep(10)  # Espera 10 segundos antes de tentar reconectar
+
+        await asyncio.sleep(60)
+
+        
+
+
+'''
 
 
 async def monitorar_leituras_consecutivas(pool):
@@ -3704,7 +4752,11 @@ async def monitorar_leituras_consecutivas(pool):
             await asyncio.sleep(10)  # Espera 10 segundos antes de tentar reconectar
 
         await asyncio.sleep(60)
-        
+
+'''
+
+
+
 
 
 monitorando = {}
@@ -3814,7 +4866,7 @@ async def process_usuario_callback(query: CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda query: True, state=Form.edit_usuario)
 async def process_usuario_edit_callback(query: CallbackQuery, state: FSMContext):
     nome_telegram = query.data
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     print(f"Clicou no usuário com nome_telegram: {nome_telegram}")
 
@@ -3852,7 +4904,7 @@ async def process_usuario_edit_callback(query: CallbackQuery, state: FSMContext)
 @dp.message_handler(state=Form.ask_supervisor_edit_name)
 async def process_edit_supervisor_name(message: types.Message, state: FSMContext):
     try:
-        pool = await create_pool()
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
         data = await state.get_data()
         user_nome_telegram = data.get('selected_user_nome_telegram')
@@ -3894,7 +4946,7 @@ async def process_supervisor_name(message: types.Message, state: FSMContext):
     try:
         data = await state.get_data()
         user_nome_telegram = data.get('selected_user_nome_telegram')
-        pool = await create_pool()
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
         supervisor_name = message.text
 
@@ -3987,12 +5039,12 @@ async def atualizar_usinas_usuario(pool):
                         insercoes.append((cod_usuario, cod_usina))
 
                 if insercoes:
+                    print(f'Inserindo a usina {cod_usina} que não pertencia ao usuario {cod_usuario}')
                     # Inserir dados na tabela machine_learning.usinas_usuario
                     await cursor.executemany(
                         "INSERT INTO machine_learning.usinas_usuario (cod_usuario, cod_usina) VALUES (%s, %s)",
                         insercoes
                     )
-
                     # Confirmar a transação
                     await conn.commit()
 
@@ -4005,6 +5057,8 @@ async def atualizar_usinas_usuario(pool):
 
                 
                 
+                
+           
                 
 # Variável global para armazenar as seleções temporárias do usuário
 user_selections = {}
@@ -4064,6 +5118,9 @@ async def editar_usinas_cadastradas(callback_query: types.CallbackQuery, state: 
         await state.finish()
 
 
+# Dicionário global para armazenar as tarefas temporizadoras ativas
+active_timers = {}
+
 @dp.callback_query_handler(lambda c: c.data.startswith('toggle_'))
 async def toggle_usina_state(callback_query: types.CallbackQuery, state: FSMContext):
     chat_id = callback_query.message.chat.id
@@ -4104,10 +5161,42 @@ async def toggle_usina_state(callback_query: types.CallbackQuery, state: FSMCont
                     except MessageNotModified:
                         pass
 
-                    await asyncio.sleep(60)
+                    # Reinicia o temporizador de 180 segundos após cada interação
+                    await reset_timer(chat_id, message_id, state)
 
-                    user_data = await state.get_data()
-                    if cod_usuario in user_data['selections']:
+    except Exception as e:
+        print(f"Ocorreu um erro ao processar a solicitação: {e}")
+        await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
+
+async def reset_timer(chat_id: int, message_id: int, state: FSMContext):
+    try:
+        # Cancela qualquer tarefa anterior associada ao temporizador
+        if chat_id in active_timers:
+            active_timers[chat_id].cancel()
+
+        # Inicia um novo temporizador de 180 segundos
+        task = asyncio.create_task(finalizar_selecao_automatica(chat_id, message_id, state))
+        active_timers[chat_id] = task
+
+    except Exception as e:
+        print(f"Ocorreu um erro ao reiniciar o temporizador: {e}")
+
+
+async def finalizar_selecao_automatica(chat_id: int, message_id: int, state: FSMContext):
+    await asyncio.sleep(60)  # Espera por 180 segundos
+
+    try:
+        pool = dp.pool  # Usa o pool já existente no dispatcher
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                user_data = await state.get_data()
+                await cursor.execute("SELECT cod_usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                result = await cursor.fetchone()
+
+                if result:
+                    cod_usuario = result[0]
+
+                    if cod_usuario in user_data.get('selections', {}):
                         for usina, ativo in user_data['selections'][cod_usuario].items():
                             await cursor.execute("""
                                 UPDATE machine_learning.usinas_usuario
@@ -4116,22 +5205,39 @@ async def toggle_usina_state(callback_query: types.CallbackQuery, state: FSMCont
                             """, (ativo, cod_usuario, usina))
                         await conn.commit()
 
+                    # Tenta apagar a mensagem com os botões após o tempo de inatividade
                     try:
+                        # Adicione um log para verificar o ID da mensagem e do chat antes de deletar
+                        print(f"Tentando apagar a mensagem {message_id} no chat {chat_id}")
+
+                        # Verifica o conteúdo da mensagem antes de apagar (pode ser útil para debugging)
                         await bot.delete_message(chat_id, message_id)
+                        print(f"Mensagem {message_id} apagada com sucesso no chat {chat_id}")
+
                     except MessageToDeleteNotFound:
-                        pass
+                        print(f"Mensagem {message_id} não encontrada no chat {chat_id}, pode já ter sido apagada.")
+                    except Exception as e:
+                        print(f"Erro ao tentar apagar a mensagem {message_id}: {e}")
 
                     await state.finish()
 
+                    # Remove o temporizador do dicionário global
+                    if chat_id in active_timers:
+                        del active_timers[chat_id]
+                else:
+                    raise ValueError("Usuário não encontrado")
+
     except Exception as e:
-        print(f"Ocorreu um erro ao processar a solicitação 2: {e}")
-    #    await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
+        print(f"Ocorreu um erro ao finalizar a seleção automaticamente: {e}")
+        await bot.send_message(chat_id, "Ocorreu um erro ao salvar as usinas selecionadas automaticamente. Por favor, tente novamente.")
+
+
 
 
 @dp.callback_query_handler(lambda c: c.data == '6')
 async def toggle_notificacoes(callback_query: types.CallbackQuery, state: FSMContext):
     chat_id = callback_query.message.chat.id
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     try:
         async with pool.acquire() as conn:
@@ -4230,7 +5336,7 @@ async def button(callback_query: types.CallbackQuery, state: FSMContext):
 
 @dp.message_handler(state=Form.cod_usina)
 async def process_cod_usina(message: types.Message, state: FSMContext):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 #    chat_id = await id_chat_grupo(pool)
     chat_id = message.chat.id
     user_input = message.text
@@ -4279,7 +5385,7 @@ async def process_cod_usina(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=Form.cod_equipamento)
 async def process_cod_equipamento(message: types.Message, state: FSMContext):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 #    chat_id = await id_chat_grupo(pool)
     chat_id = message.chat.id
     user_input = message.text
@@ -4326,7 +5432,7 @@ async def process_cod_equipamento(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=Form.usuario)
 async def process_usuario(message: types.Message, state: FSMContext):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     chat_id = await id_chat_grupo(pool)
 
     async with pool.acquire() as conn:
@@ -4351,7 +5457,7 @@ async def process_usuario(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=Form.edit_usuario)
 async def process_edit_usuario(message: types.Message, state: FSMContext):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     chat_id = await id_chat_grupo(pool)
 
     async with pool.acquire() as conn:
@@ -4423,7 +5529,7 @@ async def callback_cancelar(query: CallbackQuery):
     await bot.delete_message(chat_id=query.message.chat.id, message_id=query.message.message_id)
 
 async def callback_silenciar_usina_tempo(query):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     try:
         cod_usina, tempo = query.data.split('_')[3], query.data.split('_')[4]
@@ -4471,7 +5577,7 @@ async def callback_silenciar_usina_tempo(query):
 async def enviar_boas_vindas(message: types.Message):
     chat_id = message.chat.id
     chat_type = message.chat.type
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     primeiro_acesso = None
     usuario = None
@@ -4501,12 +5607,12 @@ async def enviar_boas_vindas(message: types.Message):
                             await cursor.execute("INSERT INTO machine_learning.usuarios_telegram (usuario, nome_supervisorio, nome_telegram, id_telegram, primeiro_acesso, cod_usuario, ativo) VALUES (%s, %s, %s, %s, %s, %s, 1)",
                                                 ('Grupo', 'Grupo Telegram', message.chat.title, chat_id, '1', '0'))
                             teclado_menu = await criar_menu()
-                            await message.reply("Grupo salvo com sucesso!\nUse o botão Menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
+                            await message.reply("Grupo salvo com sucesso!\nUse o botão /menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
                         else:
                             await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, nome_telegram = %s, ativo = 1 WHERE id_telegram = %s",
                                                 ('Grupo', 'Grupo Telegram', message.chat.title, chat_id))
                             teclado_menu = await criar_menu()
-                            await message.reply("Grupo atualizado com sucesso!\nUse o botão Menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
+                            await message.reply("Grupo atualizado com sucesso!\nUse o botão /menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
                         await conn.commit()
                     else:
                         await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
@@ -4524,11 +5630,11 @@ async def enviar_boas_vindas(message: types.Message):
                         await cursor.execute("INSERT INTO machine_learning.usuarios_telegram (usuario, nome_supervisorio, nome_telegram, id_telegram, primeiro_acesso, cod_usuario, ativo) VALUES (%s, %s, %s, %s, %s, %s, 1)",
                                             ('Grupo', 'Grupo Telegram', message.chat.title, chat_id, '1', '0'))
                         await conn.commit()
-                        await message.reply("Grupo salvo com sucesso!\nDigite Menu para opções")
+                        await message.reply("Grupo salvo com sucesso!\nDigite /menu para opções")
                     else:
                         await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, nome_telegram = %s, ativo = 1 WHERE id_telegram = %s",
                                             ('Grupo', 'Grupo Telegram', message.chat.title, chat_id))
-                        await message.reply("Grupo atualizado com sucesso!\nDigite Menu para opções")
+                        await message.reply("Grupo atualizado com sucesso!\nDigite /menu para opções")
                     await conn.commit()
                 else:
                     await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
@@ -4561,14 +5667,13 @@ async def cadastrar_usinas_usuario(pool, cod_usuario, cod_usinas):
         print(f"Erro ao cadastrar usinas para o usuário {cod_usuario}: {e}")
 
 
-# '1', 'bruno.zanella', 'Bruno Zanella', 'Bruno Zanella', '6870017547', 'zanellabruno7@gmail.com', '0', '0', '1', '374', '1', '2024-07-17 12:20:19'
 
 async def boas_vindas(message: types.Message, id_telegram=None):
     try:
         user_input = message.text.lstrip('/')
         username = user_input
         chat_id = message.chat.id
-        pool = await create_pool()
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -4642,7 +5747,7 @@ async def save_username(message: types.Message):
         user_input = message.text.lstrip('/')
         username = user_input
         chat_type = message.chat.type
-        pool = await create_pool()
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
         full_name = f"{message.from_user.first_name} {message.from_user.last_name}"
         name = f"{message.from_user.first_name}"
@@ -4692,7 +5797,7 @@ async def save_username(message: types.Message):
                                 await conn.commit()
                                 await message.reply("Usuário atualizado com sucesso!")
                             else:
-                                await message.reply("Você não pode editar o usuário aqui, se quiser editar, digite Menu!")
+                                await message.reply("Você não pode editar o usuário aqui, se quiser editar, digite /menu!")
 
                     else:
                         query = "INSERT INTO machine_learning.usuarios_telegram (usuario, nome_telegram, nome_supervisorio, id_telegram, ativo) VALUES (%s, %s, %s, %s, %s)"
@@ -4702,7 +5807,7 @@ async def save_username(message: types.Message):
                         await message.reply("Nome do usuário não encontrado, enviado para a administração!")
                         id_grupo = await id_chat_grupo(pool)
                         print(id_grupo)
-                        await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite Menu e insira manualmente')
+                        await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite /menu e insira manualmente')
 
     except Exception as e:
         print(f"Erro ao salvar o nome de usuário: {e}")
@@ -4729,6 +5834,10 @@ async def verificar_e_obter_coeficiente(cod_equipamento, pool):
     #    return None, None  # Retorna None em caso de erro
 
 
+
+from statsmodels.tsa.ar_model import AutoReg
+import numpy as np
+
 async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado, pool):
     contagem_limites = 4
 
@@ -4750,7 +5859,7 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
                 """, (int(cod_equipamento_resultado),))
                 await conn.commit()
                 return False, False, False
-            
+
         #    if data_cadastro is not None or (agora - data_cadastro <= timedelta(hours=1)):
 
             coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento_resultado, pool)
@@ -4768,9 +5877,6 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
 
             previsoes = [round(valor, 1) for valor in previsoes]
 
-            await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento_resultado),))
-            valores_atuais_114 = await cursor.fetchone()
-
             await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
             valores_atuais_3 = await cursor.fetchone()
 
@@ -4784,20 +5890,59 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
 
                 return previsoes, False, False
 
-            await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
-            valores_atuais_3 = await cursor.fetchone()
-
-            if valores_atuais_3 is not None:
-                if all(valor == 0 for valor in valores_atuais_3):
-                    await cursor.execute("""
-                    UPDATE machine_learning.leituras_consecutivas
-                    SET alerta = 0
-                    WHERE cod_equipamento = %s
-                    """, (int(cod_equipamento_resultado),))
-                    await conn.commit()
-            else:
+            # Obter valores atuais do cod_campo 114
+            await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento_resultado),))
+            valores_atuais_114 = await cursor.fetchone()
+                        
+            if valores_atuais_114 is None:
                 return previsoes, False, False
 
+
+            # await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 21", (int(cod_equipamento_resultado),))
+            # valores_atuais_21 = await cursor.fetchone()
+
+            # await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 76", (int(cod_equipamento_resultado),))
+            # valores_atuais_76 = await cursor.fetchone()
+            
+            # # Adicionar previsão futura usando AutoReg
+            # # Usamos os valores disponíveis de valor_1 a valor_5 para treinar o modelo AutoReg
+            # valores_para_treinar = np.array(valores_atuais_114)
+            # valores_para_treinar_previsoes = np.array(previsoes)
+            # valores_para_treinar_21 = np.array(valores_atuais_21)
+            # valores_para_treinar_76 = np.array(valores_atuais_76)
+
+            # # Ajustar o modelo AutoReg e prever os próximos 5 valores
+            # modelo_autoreg = AutoReg(valores_para_treinar, lags=1)  # Usando 1 lag para previsão simples
+            # modelo_autoreg_previsoes = AutoReg(valores_para_treinar_previsoes, lags=1)  # Usando 1 lag para previsão simples
+            # modelo_autoreg_21 = AutoReg(valores_para_treinar_21, lags=1)  # Usando 1 lag para previsão simples
+            # modelo_autoreg_76 = AutoReg(valores_para_treinar_76, lags=1)  # Usando 1 lag para previsão simples
+            
+            # modelo_ajustado = modelo_autoreg.fit()
+            # modelo_ajustado_previsoes = modelo_autoreg_previsoes.fit()
+            # modelo_ajustado_21 = modelo_autoreg_21.fit()
+            # modelo_ajustado_76 = modelo_autoreg_76.fit()
+
+            # # Prever os próximos 5 valores (futuros)
+            # previsoes_futuras = modelo_ajustado.predict(start=len(valores_para_treinar), end=len(valores_para_treinar) + 4)
+            # previsoes_futuras_previsoes = modelo_ajustado_previsoes.predict(start=len(valores_para_treinar_previsoes), end=len(valores_para_treinar_previsoes) + 4)
+            # previsoes_futuras_21 = modelo_ajustado_21.predict(start=len(valores_para_treinar_21), end=len(valores_para_treinar_21) + 4)
+            # previsoes_futuras_76 = modelo_ajustado_76.predict(start=len(valores_para_treinar_76), end=len(valores_para_treinar_76) + 4)
+
+            # previsoes_futuras = [round(valor, 1) for valor in previsoes_futuras]
+            # previsoes_futuras_previsoes = [round(valor, 1) for valor in previsoes_futuras_previsoes]
+            # previsoes_futuras_21 = [round(valor, 1) for valor in previsoes_futuras_21]
+            # previsoes_futuras_76 = [round(valor, 1) for valor in previsoes_futuras_76]
+
+            # print('\n\ncod_equipamento ',cod_equipamento_resultado)
+            # print('\nvalores_atuais_114',valores_atuais_114)
+            # print('\nprevisoes_futuras',previsoes_futuras)
+            # print('\nprevisoes',previsoes)
+            # print('\nprevisoes previstas',previsoes_futuras_previsoes)
+            # print('\nvalores_atuais_21 ',valores_atuais_21)
+            # print('\nprevisoes_futuras_21 ',previsoes_futuras_21)
+            # print('\nvalores_atuais_76 - ', valores_atuais_76)
+            # print('\nprevisoes_futuras_76 - ', previsoes_futuras_76)
+            
             limite_mais = 15
             limite_menos = -15
             
@@ -4826,23 +5971,11 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
 
             return previsoes, contagem_abaixo_do_limite >= contagem_limites, contagem_acima_do_limite >= contagem_limites
 
-            # else:
-            #     async with pool.acquire() as conn:
-            #         async with conn.cursor() as cursor:
-            #             await cursor.execute("""
-            #                 UPDATE machine_learning.leituras_consecutivas
-            #                 SET alerta = 0
-            #                 WHERE cod_equipamento = %s
-            #             """, (int(cod_equipamento_resultado),))
-            #             await conn.commit()
-            #     return False, False, False
-
-
             
 
 async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado):
     contagem_limites = 4
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
@@ -4922,7 +6055,7 @@ async def fazer_previsao(valores_atuais, coeficiente, intercepto, cod_equipament
     try:
 
         contagem_limites = 4
-    #    pool = await create_pool()
+    #    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
@@ -5008,6 +6141,90 @@ async def fazer_previsao(valores_atuais, coeficiente, intercepto, cod_equipament
 async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     while True:
         for cod_equipamento in cod_equipamentos:
+            # Inicializando dicionário para armazenar os valores dos últimos 5 dados por campo
+            valores = {cod: [0, 0, 0, 0, 0] for cod in cod_campo_especificados}
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        # Buscando leituras da tabela `leituras` com base nos campos especificados
+                        query = f"""
+                        SELECT data_cadastro, valor, cod_campo 
+                        FROM {tabelas} 
+                        WHERE cod_equipamento = %s 
+                        AND cod_campo IN ({', '.join(cod_campo_especificados)})
+                        """
+                        await cursor.execute(query, (cod_equipamento,))
+                        resultados = await cursor.fetchall()
+
+                        # Convertendo para DataFrame para facilitar o processamento
+                        df = pd.DataFrame(resultados, columns=['data_cadastro', 'valor', 'cod_campo'])
+                        df['data_cadastro'] = pd.to_datetime(df['data_cadastro'])
+                        df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+
+                        # Iterando sobre os cod_campo especificados
+                        for cod in cod_campo_especificados:
+                            # Filtrando os valores mais recentes para cada cod_campo
+                            valores_cod_campo = df[df['cod_campo'] == int(cod)]['valor'].values
+                            valores[cod] = list(valores_cod_campo[-5:])[::-1] + valores[cod][:5-len(valores_cod_campo[-5:])]
+
+                            # Buscando a data da última leitura na tabela `leituras`
+                            await cursor.execute(f"SELECT data_cadastro FROM {tabelas} WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
+                            data_cadastro_leituras = await cursor.fetchone()
+                            if data_cadastro_leituras:
+                                data_cadastro_formatada_leituras = data_cadastro_leituras[0].strftime('%Y-%m-%d %H:%M:%S')
+
+                                # Verificando se o campo já existe em `leituras_consecutivas`
+                                await cursor.execute(f"SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
+                                data_cadastro_consecutivas = await cursor.fetchone()
+
+                                # Se não houver dados em `leituras_consecutivas`, insira diretamente da tabela `leituras`
+                                if not data_cadastro_consecutivas:
+                                #    print(f"Inserindo para cod_equipamento: {cod_equipamento}, cod_campo: {cod}, valores: {valores[cod]}")
+                                    data_cadastro_formatada_consecutivas = data_cadastro_formatada_leituras  # Usar a data de leituras
+                                    await cursor.execute(f"""
+                                    INSERT INTO machine_learning.leituras_consecutivas 
+                                    (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                    """, (cod_equipamento, cod, *valores[cod][::-1], data_cadastro_formatada_leituras))
+                                    await conn.commit()
+
+                                else:
+                                    # Se houver, atualize se necessário
+                                    data_cadastro_formatada_consecutivas = data_cadastro_consecutivas[0].strftime('%Y-%m-%d %H:%M:%S') if data_cadastro_consecutivas else data_cadastro_formatada_leituras
+
+                                    if data_cadastro_formatada_leituras != data_cadastro_formatada_consecutivas:
+                                #        print(f"Atualizando para cod_equipamento: {cod_equipamento}, cod_campo: {cod}, valores: {valores[cod]}")
+                                        await cursor.execute(f"""
+                                        INSERT INTO machine_learning.leituras_consecutivas 
+                                        (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                        ON DUPLICATE KEY UPDATE
+                                        valor_1 = machine_learning.leituras_consecutivas.valor_2,
+                                        valor_2 = machine_learning.leituras_consecutivas.valor_3,
+                                        valor_3 = machine_learning.leituras_consecutivas.valor_4,
+                                        valor_4 = machine_learning.leituras_consecutivas.valor_5,
+                                        valor_5 = VALUES(valor_5),
+                                        data_cadastro = VALUES(data_cadastro)
+                                        """, (cod_equipamento, cod, *valores[cod][::-1], data_cadastro_formatada_leituras))
+                                        await conn.commit()
+
+            except Exception as e:
+                print(f"Erro ao processar o equipamento {cod_equipamento}: {str(e)}")
+                
+            except mysql.connector.errors.OperationalError as e:
+                if 'Lost connection to MySQL server during query' in str(e):
+                    print(f"Erro ao processar o equipamento {cod_equipamento}: {str(e)}")
+                    continue
+                else:
+                    raise
+
+        # Intervalo entre execuções
+        await asyncio.sleep(30)
+
+'''
+async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
+    while True:
+        for cod_equipamento in cod_equipamentos:
             valores = {cod: [0, 0, 0, 0, 0] for cod in cod_campo_especificados}
             try:
                 async with pool.acquire() as conn:
@@ -5065,6 +6282,7 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 
         await asyncio.sleep(120)
 
+'''
 
 sem_mensagem_silenciado = set()
 
@@ -5156,12 +6374,6 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         # Calculando a média dos valores
                         media_valores_114 = sum(valores_atuais_114) / len(valores_atuais_114)
 
-            #            print('cod_equipamento ',cod_equipamento,' media_valores_114 ',media_valores_114)
-
-                        # Verificando se a média é menor que 50, se for, continue para a próxima iteração
-                    #    if media_valores_114 < 50:
-                    #        continue
-
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
                         result = await cursor.fetchone()
 
@@ -5191,19 +6403,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                         previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
-                        # # Verifica se previsoes é iterável e todos os valores de previsões são <= 100
-                        # if isinstance(previsoes, (list, tuple)) and all(previsao <= 100 for previsao in previsoes):
-                        #     pass
-                        # else:
-                        #     continue
                         
                         if isinstance(previsoes, (list, tuple)):
                             # Ajusta previsões acima de 100 para 100
                             previsoes = [min(previsao, 100) for previsao in previsoes]
-                    #    else:
-                    #        continue
 
-                        
                         if cod_equipamento not in ultimos_alertas:
                             ultimos_alertas[cod_equipamento] = []
                         ultimos_alertas[cod_equipamento].append(int(alerta_abaixo or alerta_acima))
@@ -5221,6 +6425,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                 coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                 previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                if isinstance(previsoes, (list, tuple)):
+                                    # Ajusta previsões acima de 100 para 100
+                                    previsoes = [min(previsao, 100) for previsao in previsoes]
+                                    
+                            
                                 # Calculando a média dos valores
                                 media_valores_114 = sum(valores_atuais_114) / len(valores_atuais_114)
 
@@ -5264,32 +6473,9 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     
                                 if cod_equipamento not in alertas_enviados_previsao:
 
-                                    valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                                    valores_previstos_str = ', '.join(map(str, previsoes))
-                                    equipamentos_str = f'\n\nValores Atuais:       {valores_atuais_str} \nValores Previstos:  {valores_previstos_str}'
-                                    
-                                    mensagem = ''
-                                    mensagem_grupo = ''
-                                    if alerta_abaixo:
-                                        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                        result = await cursor.fetchone()
-                                        if result is not None:
-                                            nome, cod_usina, cod_usuario = result
-                                            mensagem = f"({nome}) - Load Speed abaixo do previsto {equipamentos_str}\n\n"
-                                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed abaixo do previsto\n\n"
-            
-                                    elif alerta_acima:
-                                        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                        result = await cursor.fetchone()
-                                        if result is not None:
-                                            nome, cod_usina, cod_usuario = result
-                                            mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
-                                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
-
-                                    if cod_usina not in alertas_por_usina:
-                                        alertas_por_usina[cod_usina] = []
-                                    alertas_por_usina[cod_usina].append(mensagem)
-                                    alertas_por_usina[cod_usina].append(mensagem_grupo)
+                                    # valores_atuais_str = ', '.join(map(str, valores_atuais_114))
+                                    # valores_previstos_str = ', '.join(map(str, previsoes))
+                                    # equipamentos_str = f'\n\nValores Atuais:       {valores_atuais_str} \nValores Previstos:  {valores_previstos_str}'
 
                                     alertas_enviados_previsao.add(cod_equipamento)
                 
@@ -5304,10 +6490,42 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
 
                                     # Verificando se a média é menor que 50, se for, continue para a próxima iteração
                                     if media_valores_114 < 50:
-                                       continue
-                    
+                                        print('cod equipamento com valores menores que 50, nao continuar codigo', cod_equipamento,' media_valores_114',media_valores_114)
+                                        continue
+
+                                    mensagem = ''
+                                    mensagem_grupo = ''
+                                    # if alerta_abaixo:
+                                    #     await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+                                    #     result = await cursor.fetchone()
+                                    #     if result is not None:
+                                    #         nome, cod_usina, cod_usuario = result
+                                    #         mensagem = f"({nome}) - Load Speed abaixo do previsto {equipamentos_str}\n\n"
+                                    #         mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed abaixo do previsto\n\n"
+
+                                    if alerta_acima:            
+                                #    elif alerta_acima:
+
+                                        valores_atuais_str = ', '.join(map(str, valores_atuais_114))
+                                        valores_previstos_str = ', '.join(map(str, previsoes))
+                                        equipamentos_str = f'\n\nValores Atuais:       {valores_atuais_str} \nValores Previstos:  {valores_previstos_str}'
+
+                                        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+                                        result = await cursor.fetchone()
+                                        if result is not None:
+                                            nome, cod_usina, cod_usuario = result
+                                            mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
+                                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
+
+                                    if cod_usina not in alertas_por_usina:
+                                        alertas_por_usina[cod_usina] = []
+                                    alertas_por_usina[cod_usina].append(mensagem)
+                                    alertas_por_usina[cod_usina].append(mensagem_grupo)
+
+
+
                             elif media_alerta == 0 and cod_equipamento in alertas_enviados_previsao:
-                                print('equipamento - ',cod_equipamento,' em alerta 0, valores 114 previsao depois com',valores_atuais_114)
+                                print('equipamento -',cod_equipamento,'em alerta 0, valores 114 previsao depois com',valores_atuais_114)
 
                                 await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
                                 valores_atuais = await cursor.fetchone()
@@ -5315,6 +6533,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                 coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                 previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                if isinstance(previsoes, (list, tuple)):
+                                    # Ajusta previsões acima de 100 para 100
+                                    previsoes = [min(previsao, 100) for previsao in previsoes]
+                                    
+                            
                                 await cursor.execute("""
                                     SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                 """, (cod_equipamento,))
@@ -5360,7 +6583,9 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     else:
                                         pass
 
-                                if all(value == 0 for value in valores_atuais_114[:-1]):
+#                                if all(value == 0 for value in valores_atuais_114[:-1]):
+                                if any(value == 0 for value in valores_atuais_114[:-1]):
+
                                     print(cod_equipamento,'alerta removido, alerta em 0 de previsao, zerou valores',all(value == 0 for value in valores_atuais_114[:-1]))
                                 #    print('equipamento - ',cod_equipamento,' valores 114 previsao depois com',valores_atuais_114)
 
@@ -5370,6 +6595,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                     previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                    if isinstance(previsoes, (list, tuple)):
+                                        # Ajusta previsões acima de 100 para 100
+                                        previsoes = [min(previsao, 100) for previsao in previsoes]
+                                        
+                            
                                     await cursor.execute("""
                                         SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                     """, (cod_equipamento,))
@@ -5379,15 +6609,45 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     valores_atuais_str = ', '.join(map(str, valores_atuais_114))
                                     valores_previstos_str = ', '.join(map(str, previsoes))
                                     alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
-                                    
-                                    hora_previsao = hora_media_alerta_1[cod_equipamento]
 
-                                    await cursor.execute("""
+
+
+                                    # Extrair códigos dos alarmes_ativos_str
+                                    alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                    alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                    # Verificar alarmes correspondentes
+                                    alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                    alarme_encontrado = len(alarmes_correspondentes) > 0
+                                    alarme_verificado = 1 if alarme_encontrado else 0
+
+                                    # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                    if alarme_verificado == 1:
+                                #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                                #        print('Alarmes correspondentes:', alarmes_correspondentes)
+                                        pass
+
+                                    # Definir o valor de `data_cadastro_quebra`
+                                    data_cadastro_quebra = 'NOW()' if alarme_verificado == 1 else 'NULL'
+
+                                #    hora_previsao = hora_media_alerta_1[cod_equipamento]
+
+                                    # Inserir dados na tabela `valores_previsao`
+                                    await cursor.execute(f"""
                                         INSERT INTO machine_learning.valores_previsao 
                                         (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                                        VALUES (%s, %s, NOW(), %s, NOW(), 1, %s, %s, %s)
+                                        VALUES (%s, %s, NOW(), %s, {data_cadastro_quebra}, 1, %s, %s, %s)
                                     """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+
                                     await conn.commit()
+                                    
+                                    # hora_previsao = hora_media_alerta_1[cod_equipamento]
+                                    # await cursor.execute("""
+                                    #     INSERT INTO machine_learning.valores_previsao 
+                                    #     (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
+                                    #     VALUES (%s, %s, NOW(), %s, NOW(), 1, %s, %s, %s)
+                                    # """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+                                    # await conn.commit()
 
                                     await cursor.execute("""
                                     UPDATE machine_learning.leituras_consecutivas
@@ -5397,10 +6657,10 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                     await conn.commit()
                                     print('escrevendo na coluna alerta 0 para previsao')
 
-                                    await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                                    result = await cursor.fetchone()
+                                    # await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+                                    # result = await cursor.fetchone()
                                     
-                                    print('result para enviar nome da usina do alerta previsao',result)
+                                    # print('result para enviar nome da usina do alerta previsao',result)
                                     
                                     # if result is not None:
                                     #     nome, cod_usina, cod_usuario = result
@@ -5422,6 +6682,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
 
         for cod_usina, mensagens in alertas_por_usina.items():
 
+            # Verifica se qualquer mensagem não está vazia
+            if not any(mensagem.strip() for mensagem in mensagens):
+                print('usina com equipamento sem mensagem, ou seja, valor menor que 50% ',cod_usina)
+                continue
+            
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
                     # Buscar o nome e o código do modelo de funcionamento da usina
@@ -5488,300 +6753,21 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                         
                             nomes_usuarios_str = ', '.join(nomes_usuarios)
                             id_grupo = await id_chat_grupo(pool)
+                            
+                            botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                            botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+                            keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                                                        
                             mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                            await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                        #    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
+                            await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
                             nomes_usuarios.clear()
 
                             sys.stdout.flush()
 
         
 #        await asyncio.sleep(10)
-        await asyncio.sleep(130)
-
-
-
-
-'''
-async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool):
-    usuarios_bloqueados = set()
-    alertas_enviados_previsao = set()
-    ultimos_alertas = defaultdict(list)
-    hora_media_alerta_1 = {}
-
-    while True:
-        nomes_usuarios = []
-        alertas_por_usina = {}
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                # 1. Consulta única para obter todas as leituras e alarmes necessários
-                await cursor.execute("""
-                    SELECT lc.cod_equipamento, lc.cod_campo, lc.valor_1, lc.valor_2, lc.valor_3, lc.valor_4, lc.valor_5, lc.data_cadastro,
-                           la.cod_alarme, sg.nome, sg.cod_usina, sg.cod_usuario
-                    FROM machine_learning.leituras_consecutivas lc
-                    LEFT JOIN sup_geral.alarmes_ativos la ON lc.cod_equipamento = la.cod_equipamento
-                    LEFT JOIN sup_geral.equipamentos sg ON lc.cod_equipamento = sg.codigo
-                    WHERE lc.cod_equipamento IN %s
-                """, (tuple(cod_equipamentos),))
-                results = await cursor.fetchall()
-
-        # 2. Organizar os resultados em dicionários
-        leituras = defaultdict(list)
-        alarmes_ativos = defaultdict(list)
-        equipamentos_info = {}
-
-        for row in results:
-            cod_equipamento = row[0]
-            cod_campo = row[1]
-            valores = row[2:7]
-            data_cadastro = row[7]
-            cod_alarme = row[8]
-            nome = row[9]
-            cod_usina = row[10]
-            cod_usuario = row[11]
-
-            if cod_campo == 114:
-                leituras[cod_equipamento].append((valores, data_cadastro))
-            if cod_alarme:
-                alarmes_ativos[cod_equipamento].append(cod_alarme)
-            if cod_equipamento not in equipamentos_info:
-                equipamentos_info[cod_equipamento] = (nome, cod_usina, cod_usuario)
-
-        # 3. Processamento de cada equipamento
-        for cod_equipamento in cod_equipamentos:
-            valores_atuais_114, data_cadastro_consecutivas = next(iter(leituras.get(cod_equipamento, [])), (None, None))
-            if not valores_atuais_114:
-                continue
-
-            agora = datetime.now()
-
-            if agora - data_cadastro_consecutivas > timedelta(hours=1):
-                continue
-
-            coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento, pool)
-            previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(
-                valores_atuais_114, coeficiente_existente, intercepto_existente, cod_equipamento, pool)
-            
-
-            ultimos_alertas[cod_equipamento].append(int(alerta_abaixo or alerta_acima))
-            if len(ultimos_alertas[cod_equipamento]) > 5:
-                ultimos_alertas[cod_equipamento].pop(0)
-
-            if len(ultimos_alertas[cod_equipamento]) == 5:
-                media_alerta = sum(ultimos_alertas[cod_equipamento]) / len(ultimos_alertas[cod_equipamento])
-    
-                print('cod_equipamento ',cod_equipamento,'previsoes ',previsoes,'\nmedia_alerta',media_alerta)
-    
-                if media_alerta == 1:
-                    if cod_equipamento not in hora_media_alerta_1:
-                        hora_media_alerta_1[cod_equipamento] = datetime.now()
-
-                    valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                    valores_previstos_str = ', '.join(map(str, previsoes))
-                    alarmes_ativos_str = ', '.join(map(str, alarmes_ativos.get(cod_equipamento, [])))
-
-                    nome, cod_usina, cod_usuario = equipamentos_info[cod_equipamento]
-
-                    await cursor.execute("""
-                        INSERT INTO machine_learning.valores_previsao 
-                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
-                    """, (cod_equipamento, cod_usina, hora_media_alerta_1[cod_equipamento], valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                    await conn.commit()
-
-                    if cod_equipamento not in alertas_enviados_previsao:
-                        equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {valores_previstos_str}'
-                        mensagem = ''
-                        mensagem_grupo = ''
-
-                        if alerta_abaixo:
-                            mensagem = f"({nome}) - Load Speed abaixo do previsto {equipamentos_str}\n\n"
-                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed abaixo do previsto\n\n"
-                        elif alerta_acima:
-                            mensagem = f"({nome}) - Load Speed acima do previsto {equipamentos_str}\n\n"
-                            mensagem_grupo = f"Equipamento: {cod_equipamento} ({nome}): {equipamentos_str}\n\nAlerta: Load Speed acima do previsto\n\n"
-
-                        if cod_usina not in alertas_por_usina:
-                            alertas_por_usina[cod_usina] = []
-                        alertas_por_usina[cod_usina].append(mensagem)
-                        alertas_por_usina[cod_usina].append(mensagem_grupo)
-
-                        alertas_enviados_previsao.add(cod_equipamento)
-
-                        await cursor.execute("""
-                            UPDATE machine_learning.leituras_consecutivas
-                            SET alerta = 1
-                            WHERE cod_equipamento = %s
-                        """, (cod_equipamento,))
-                        await conn.commit()
-
-                        print('Alerta de previsão adicionado:', cod_equipamento)
-
-                elif media_alerta == 0 and cod_equipamento in alertas_enviados_previsao:
-                    print('equipamento - ', cod_equipamento, ' em alerta 0, valores 114 previsao depois com', valores_atuais_114)
-
-                    # Recuperar valores atuais do equipamento
-                    await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
-                    valores_atuais = await cursor.fetchone()
-
-                    coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
-                    previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
-
-                    # Buscar alarmes ativos
-                    await cursor.execute("""
-                        SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
-                    """, (cod_equipamento,))
-                    alarmes_ativos = await cursor.fetchall()
-
-                    valores_atuais_str = ', '.join(map(str, valores_atuais_114))
-                    valores_previstos_str = ', '.join(map(str, previsoes))
-                    alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
-
-                    hora_previsao = hora_media_alerta_1[cod_equipamento]
-
-                    # Inserir previsão na tabela machine_learning.valores_previsao
-                    await cursor.execute("""
-                        INSERT INTO machine_learning.valores_previsao 
-                        (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, previsao, valores_reais, valores_previstos, alarmes) 
-                        VALUES (%s, %s, NOW(), %s, NULL, 1, %s, %s, %s)
-                    """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
-                    await conn.commit()
-
-                    if cod_equipamento not in hora_media_alerta_saida: 
-                        hora_media_alerta_saida[cod_equipamento] = datetime.now()
-                        
-                        # Verificar última quebra
-                        await cursor.execute("""
-                            SELECT data_cadastro_previsto, data_cadastro_quebra 
-                            FROM machine_learning.relatorio_quebras 
-                            WHERE cod_equipamento = %s
-                            ORDER BY id DESC 
-                            LIMIT 1
-                        """, (cod_equipamento,))
-                        data_cadastro_previsto, data_cadastro_quebra = await cursor.fetchone()
-
-                        # Atualizar data_cadastro_previsto_saida se não houver data_cadastro_quebra
-                        if data_cadastro_quebra is None:
-                            await cursor.execute("""
-                                UPDATE machine_learning.relatorio_quebras 
-                                SET data_cadastro_previsto_saida = %s 
-                                WHERE cod_equipamento = %s 
-                                ORDER BY data_cadastro_previsto DESC 
-                                LIMIT 1
-                            """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
-                            await conn.commit()
-
-                            await cursor.execute("""
-                                UPDATE machine_learning.log_relatorio_quebras 
-                                SET data_cadastro_previsto_saida = %s 
-                                WHERE cod_equipamento = %s 
-                                ORDER BY data_cadastro_previsto DESC 
-                                LIMIT 1
-                            """, (hora_media_alerta_saida[cod_equipamento], cod_equipamento))
-                            await conn.commit()
-
-                    if all(value == 0 for value in valores_atuais_114[:-1]):
-                        print(cod_equipamento, 'alerta removido, alerta em 0 de previsao, zerou valores', all(value == 0 for value in valores_atuais_114[:-1]))
-
-                        # Atualizar previsão e zerar alerta
-                        await cursor.execute("""
-                            UPDATE machine_learning.leituras_consecutivas
-                            SET alerta = 0
-                            WHERE cod_equipamento = %s
-                        """, (int(cod_equipamento),))
-                        await conn.commit()
-                        print('escrevendo na coluna alerta 0 para previsao')
-
-                        await cursor.execute("SELECT nome, cod_usina, cod_usuario FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                        result = await cursor.fetchone()
-
-                        print('result para enviar nome da usina do alerta previsao', result)
-
-                        # Limpar registros de alerta
-                        hora_previsao = hora_media_alerta_1.pop(cod_equipamento, None)
-                        alertas_enviados_previsao.remove(cod_equipamento)
-                        nomes_usuarios.clear()
-
-                        print('alerta removido de previsao', cod_equipamento)
-
-                    
-        for cod_usina, mensagens in alertas_por_usina.items():
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    # Buscar o nome e o código do modelo de funcionamento da usina
-                    await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                    result = await cursor.fetchone()
-                    if result:
-                        nome_usina, cod_modelo_funcionamento = result
-                        print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento,' esta dentro do loop da previsao')
-
-                        # Buscar todos os cod_usuario associados à usina
-                        await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                        cod_usuarios = await cursor.fetchall()
-
-                        if cod_usuarios:
-                            nomes_usuarios = []
-
-                            for cod_usuario_tuple in cod_usuarios:
-                                cod_usuario = cod_usuario_tuple[0]
-
-                                # Verificar se o usuário não está silenciado
-                                if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
-
-                                    # Verificar se a usina está ativa para o usuário
-                                    await cursor.execute("SELECT ativo FROM machine_learning.usinas_usuario WHERE cod_usina = %s AND cod_usuario = %s", (cod_usina, cod_usuario))
-                                    usina_ativa_row = await cursor.fetchone()
-                                    print("(loop 1 'previsao') A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
-
-                                    if usina_ativa_row and usina_ativa_row[0] == 1:
-                                        await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                                        result = await cursor.fetchone()
-                                        
-                                        if result:
-                                            id_telegram, nome_usuario, ativo = result
-                                            if ativo == 1:
-                                                try:
-                                                    nomes_usuarios.append(nome_usuario)
-                                                    botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
-                                                    botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
-                    
-                                                    keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
-                    
-                                                    mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-                                                    await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
-                    
-                                                    if cod_usuario in usuarios_bloqueados:
-                                                        usuarios_bloqueados.remove(cod_usuario)
-                                                        id_grupo = await id_chat_grupo(pool)
-                                                        if id_grupo is not None:
-                                                            await bot.send_message(id_grupo, f"🚫 🟢 O bot foi desbloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                        await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE cod_usuario = %s", (cod_usuario,))
-                                                        await conn.commit()
-                                                                                                                        
-                                                except BotBlocked:
-                                                    if cod_usuario not in usuarios_bloqueados:
-                                                        usuarios_bloqueados.add(cod_usuario)
-                                                        id_grupo = await id_chat_grupo(pool)
-                                                        if id_grupo is not None:
-                                                            await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
-                                                        await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
-                                                        await conn.commit()
-
-                                        else:
-                                            continue
-                                        
-                            nomes_usuarios_str = ', '.join(nomes_usuarios)
-                            id_grupo = await id_chat_grupo(pool)
-                            mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                            await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
-                            nomes_usuarios.clear()
-
-                            sys.stdout.flush()
-
-
-#        await asyncio.sleep(10)
-        await asyncio.sleep(190)
-
-'''
+        await asyncio.sleep(300)
 
 
 
@@ -5797,6 +6783,70 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
     usuarios_bloqueados = set()
     alertas_enviados_acima = set()
 
+    # while True:
+    #     alertas_por_usina = {}
+
+    #     for cod_equipamento in cod_equipamentos:
+    #         try:
+    #             async with pool.acquire() as conn:
+    #                 async with conn.cursor() as cursor:
+    #                     await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
+    #                     result = await cursor.fetchone()
+
+    #                     if result is None:
+    #                         continue
+
+    #                     valores_atuais_114 = result[:-1]
+    #                     data_cadastro_consecutivas = result[-1]
+
+    #                     if valores_atuais_114 is None:
+    #                         continue
+                        
+    #                     await cursor.execute("SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1", (int(cod_equipamento),))
+    #                     result = await cursor.fetchone()
+    #                     if result is not None:
+    #                         data_cadastro_leituras = result[0]
+    #                     else:
+    #                         continue
+
+    #                     if data_cadastro_leituras == data_cadastro_consecutivas:
+    #                         continue
+
+    #                     agora = datetime.now()
+
+    #                     if agora - data_cadastro_consecutivas > timedelta(hours=1):
+    #                         continue
+
+    #                     alerta_80 = False
+    #                     alerta_100 = False
+
+    #                     for valor in valores_atuais_114:
+    #                         if 80 <= valor < 100:
+    #                             alerta_80 = True
+    #                             alerta_100 = False
+    #                         elif valor == 100:
+    #                             alerta_80 = False
+    #                             alerta_100 = True
+
+
+    #                     if cod_equipamento not in ultimos_valores:
+    #                             ultimos_valores[cod_equipamento] = []
+    #                     ultimos_valores[cod_equipamento].append(valor)
+    #                     if len(ultimos_valores[cod_equipamento]) > 5:
+    #                         ultimos_valores[cod_equipamento].pop(0)
+
+
+    #                     if len(ultimos_valores[cod_equipamento]) == 5:
+    #                         media = sum(ultimos_valores[cod_equipamento]) / len(ultimos_valores[cod_equipamento])
+
+    #                         if media >= 80 and media < 100:
+    #                             alerta_80 = True
+    #                             alerta_100 = False
+    #                         elif media == 100:
+    #                             alerta_80 = False
+    #                             alerta_100 = True
+
+
     while True:
         alertas_por_usina = {}
 
@@ -5804,19 +6854,27 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
             try:
                 async with pool.acquire() as conn:
                     async with conn.cursor() as cursor:
-                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114", (int(cod_equipamento),))
+                        # Busca os valores da tabela leituras_consecutivas para o cod_campo 114
+                        await cursor.execute(
+                            "SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114",
+                            (int(cod_equipamento),)
+                        )
                         result = await cursor.fetchone()
 
                         if result is None:
                             continue
 
-                        valores_atuais_114 = result[:-1]
+                        valores_atuais_114 = result[:-1]  # Os cinco valores
                         data_cadastro_consecutivas = result[-1]
 
                         if valores_atuais_114 is None:
                             continue
                         
-                        await cursor.execute("SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1", (int(cod_equipamento),))
+                        # Verifica se os dados são novos comparados à última leitura
+                        await cursor.execute(
+                            "SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1",
+                            (int(cod_equipamento),)
+                        )
                         result = await cursor.fetchone()
                         if result is not None:
                             data_cadastro_leituras = result[0]
@@ -5828,38 +6886,34 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                         agora = datetime.now()
 
+                        # Ignora leituras muito antigas
                         if agora - data_cadastro_consecutivas > timedelta(hours=1):
                             continue
 
-                        alerta_80 = False
-                        alerta_100 = False
-
-                        for valor in valores_atuais_114:
-                            if 80 <= valor < 100:
-                                alerta_80 = True
-                                alerta_100 = False
-                            elif valor == 100:
-                                alerta_80 = False
-                                alerta_100 = True
-
-
+                        # Atualiza os últimos 5 valores
                         if cod_equipamento not in ultimos_valores:
-                                ultimos_valores[cod_equipamento] = []
-                        ultimos_valores[cod_equipamento].append(valor)
+                            ultimos_valores[cod_equipamento] = []
+                        
+                        # Adiciona os novos valores e remove os antigos se ultrapassar 5
+                        ultimos_valores[cod_equipamento].extend(valores_atuais_114)
                         if len(ultimos_valores[cod_equipamento]) > 5:
-                            ultimos_valores[cod_equipamento].pop(0)
+                            ultimos_valores[cod_equipamento] = ultimos_valores[cod_equipamento][-5:]
 
-                    #    print('\ncod_equipamento ',cod_equipamento,' ultimos_valores 80% ',ultimos_valores[cod_equipamento],'\n valores_atuais_114 ',valores_atuais_114)
-
+                        # Só calcula a média se já houver 5 valores
                         if len(ultimos_valores[cod_equipamento]) == 5:
-                            media = sum(ultimos_valores[cod_equipamento]) / len(ultimos_valores[cod_equipamento])
+                            media = sum(ultimos_valores[cod_equipamento]) / 5
 
-                            if media >= 80 and media < 100:
+                            alerta_80 = False
+                            alerta_100 = False
+
+                            # Verifica a média, e não os valores individuais
+                            if 80 <= media < 100:
                                 alerta_80 = True
                                 alerta_100 = False
                             elif media == 100:
                                 alerta_80 = False
                                 alerta_100 = True
+
                                 
                             if media > 0.1 and media < 80 and not cod_equipamento in alertas_enviados:
 
@@ -5892,14 +6946,40 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     await conn.commit()
 
 
+                                    # Extrair códigos dos alarmes_ativos_str
+                                    alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                    alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                    # Verificar alarmes correspondentes
+                                    alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                    alarme_encontrado = len(alarmes_correspondentes) > 0
+                                    alarme_verificado = 1 if alarme_encontrado else 0
+
+                                    # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                    if alarme_verificado == 1:
+                                #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                                #        print('Alarmes correspondentes:', alarmes_correspondentes)
+                                        pass
+                                    # await cursor.execute("""
+                                    #     INSERT INTO machine_learning.valores_previsao 
+                                    #     (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, alerta_80, valores_reais, valores_previstos, alarmes, alarme_verificado) 
+                                    #     VALUES (%s, %s, NOW(), NULL, NULL, 0, %s, %s, %s, %s)
+                                    # """, (cod_equipamento, cod_usina, valores_atuais_str, valores_previstos_str, alarmes_ativos_str, alarme_verificado))
+
+
                             elif media >= 80 and media < 100:
-                                
+
                                 await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
                                 valores_atuais = await cursor.fetchone()
                                 
                                 coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                 previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                if isinstance(previsoes, (list, tuple)):
+                                    # Ajusta previsões acima de 100 para 100
+                                    previsoes = [min(previsao, 100) for previsao in previsoes]
+                                    
+                            
                                 await cursor.execute("""
                                     SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                 """, (cod_equipamento,))
@@ -5910,6 +6990,21 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 valores_previstos_str = ', '.join(map(str, previsoes))
                                 alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
 
+                                # Extrair códigos dos alarmes_ativos_str
+                                alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                # Verificar alarmes correspondentes
+                                alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                alarme_encontrado = len(alarmes_correspondentes) > 0
+                                alarme_verificado = 1 if alarme_encontrado else 0
+
+                                # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                if alarme_verificado == 1:
+                            #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                            #        print('Alarmes correspondentes em 80%:', alarmes_correspondentes)
+                                    pass
+                                    
                                 if cod_equipamento not in hora_media_alerta_1_80: 
                                     hora_media_alerta_1_80[cod_equipamento] = datetime.now()
 
@@ -5950,6 +7045,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                     previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                    if isinstance(previsoes, (list, tuple)):
+                                        # Ajusta previsões acima de 100 para 100
+                                        previsoes = [min(previsao, 100) for previsao in previsoes]
+                                        
+                            
                                     valores_atuais_str = ', '.join(map(str, valores_atuais_114))
                                     valores_previstos_str = ', '.join(map(str, previsoes))
                                     equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {valores_previstos_str}\n\n'
@@ -5989,6 +7089,12 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                 previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+
+                                if isinstance(previsoes, (list, tuple)):
+                                    # Ajusta previsões acima de 100 para 100
+                                    previsoes = [min(previsao, 100) for previsao in previsoes]
+                                    
+                                        
                                 await cursor.execute("""
                                     SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                 """, (cod_equipamento,))
@@ -5998,6 +7104,21 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 valores_previstos_str = ', '.join(map(str, previsoes))
                                 alarmes_ativos_str = ', '.join(map(str, alarmes_ativos))
 
+                                # Extrair códigos dos alarmes_ativos_str
+                                alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                # Verificar alarmes correspondentes
+                                alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                alarme_encontrado = len(alarmes_correspondentes) > 0
+                                alarme_verificado = 1 if alarme_encontrado else 0
+
+                                # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                if alarme_verificado == 1:
+                            #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                            #        print('Alarmes correspondentes em 100%:', alarmes_correspondentes)
+                                    pass
+                                    
                                 if cod_equipamento not in hora_media_alerta_1_100: 
                                     hora_media_alerta_1_100[cod_equipamento] = datetime.now()
 
@@ -6038,6 +7159,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                     previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+                                    if isinstance(previsoes, (list, tuple)):
+                                        # Ajusta previsões acima de 100 para 100
+                                        previsoes = [min(previsao, 100) for previsao in previsoes]
+                                        
+                                        
                                     valores_atuais_str = ', '.join(map(str, valores_atuais_114))
                                     valores_previstos_str = ', '.join(map(str, previsoes))
                                     equipamentos_str = f'\n\nValores Atuais: {valores_atuais_str} \nValores Previstos: {valores_previstos_str}\n\n'
@@ -6082,6 +7208,12 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                 previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+
+                                if isinstance(previsoes, (list, tuple)):
+                                    # Ajusta previsões acima de 100 para 100
+                                    previsoes = [min(previsao, 100) for previsao in previsoes]
+                                    
+                                        
                                 await cursor.execute("""
                                     SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                 """, (cod_equipamento,))
@@ -6153,7 +7285,8 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                     # fim do escrever na coluna data_cadastro_previsto_saida
                                 
-                                if all(value == 0 for value in valores_atuais_114[:-1]):
+#                                if all(value == 0 for value in valores_atuais_114[:-1]):
+                                if any(value == 0 for value in valores_atuais_114[:-1]):
                                     print(cod_equipamento,'alerta removido, alerta em 0 de 80%, zerou valores',all(value == 0 for value in valores_atuais_114[:-1]))
                                 #    print('equipamento - ',cod_equipamento, 'valores 114 80 a 100% depois com',valores_atuais_114)
 
@@ -6176,6 +7309,12 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                                     previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
 
+
+                                    if isinstance(previsoes, (list, tuple)):
+                                        # Ajusta previsões acima de 100 para 100
+                                        previsoes = [min(previsao, 100) for previsao in previsoes]
+                                        
+                                        
                                     await cursor.execute("""
                                         SELECT cod_alarme FROM sup_geral.alarmes_ativos WHERE cod_equipamento = %s
                                     """, (cod_equipamento,))
@@ -6193,13 +7332,42 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                         result = await cursor.fetchone()
                                         if result is not None:
                                             nome, cod_usina, cod_usuario = result
-                                            await cursor.execute("""
+
+                                            # Extrair códigos dos alarmes_ativos_str
+                                            alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                            alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                            # Verificar alarmes correspondentes
+                                            alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                            alarme_encontrado = len(alarmes_correspondentes) > 0
+                                            alarme_verificado = 1 if alarme_encontrado else 0
+
+                                            # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                            if alarme_verificado == 1:
+                                        #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                                        #        print('Alarmes correspondentes:', alarmes_correspondentes)
+                                                pass
+
+                                            # Definir o valor de `data_cadastro_quebra`
+                                            data_cadastro_quebra = 'NOW()' if alarme_verificado == 1 else 'NULL'
+                                        #    print('data_cadastro_quebra 100',data_cadastro_quebra, 'cod_equipamento', cod_equipamento)
+
+                                            # Inserir dados na tabela `valores_previsao`
+                                            await cursor.execute(f"""
                                                 INSERT INTO machine_learning.valores_previsao 
-                                                (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra,alerta_80, alerta_100, valores_reais, valores_previstos, alarmes) 
-                                                VALUES (%s, %s, NOW(), %s, NOW(), 0, 1, %s, %s, %s)
+                                                (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, alerta_80, alerta_100, valores_reais, valores_previstos, alarmes) 
+                                                VALUES (%s, %s, NOW(), %s, {data_cadastro_quebra}, 0, 1, %s, %s, %s)
                                             """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+
                                             await conn.commit()
-                                        #    hora_previsao = hora_media_alerta_1_100.pop(cod_equipamento, None)
+                                    
+                                            # await cursor.execute("""
+                                            #     INSERT INTO machine_learning.valores_previsao 
+                                            #     (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra,alerta_80, alerta_100, valores_reais, valores_previstos, alarmes) 
+                                            #     VALUES (%s, %s, NOW(), %s, NOW(), 0, 1, %s, %s, %s)
+                                            # """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+                                            # await conn.commit()
+                                            
                                             print(f'alerta removido para o equipamento {cod_equipamento}, escrevendo na tabela valores_previsao alerta_100 - hora_previsao',hora_previsao)
 
                                     if cod_equipamento in hora_media_alerta_1_80: 
@@ -6209,6 +7377,35 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                         result = await cursor.fetchone()
                                         if result is not None:
                                             nome, cod_usina, cod_usuario = result
+
+                                            # Extrair códigos dos alarmes_ativos_str
+                                            alarmes_ativos_extracao = re.findall(r'\d+', alarmes_ativos_str)
+                                            alarmes_ativos_list = list(map(int, alarmes_ativos_extracao))
+
+                                            # Verificar alarmes correspondentes
+                                            alarmes_correspondentes = [alarme for alarme in alarmes_ativos_list if alarme in codigos_alarmes_desejados]
+                                            alarme_encontrado = len(alarmes_correspondentes) > 0
+                                            alarme_verificado = 1 if alarme_encontrado else 0
+
+                                            # Mostrar alarmes correspondentes se alarme_verificado for 1
+                                            if alarme_verificado == 1:
+                                        #        print('cod_equipamento', cod_equipamento, 'alarme_verificado', alarme_verificado)
+                                        #        print('Alarmes correspondentes:', alarmes_correspondentes)
+                                                pass
+
+                                            # Definir o valor de `data_cadastro_quebra`
+                                            data_cadastro_quebra = 'NOW()' if alarme_verificado == 1 else 'NULL'
+                                        #    print('data_cadastro_quebra 80',data_cadastro_quebra, 'cod_equipamento', cod_equipamento)
+
+                                            # # Inserir dados na tabela `valores_previsao`
+                                            # await cursor.execute(f"""
+                                            #     INSERT INTO machine_learning.valores_previsao 
+                                            #     (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, alerta_80, alerta_100, valores_reais, valores_previstos, alarmes) 
+                                            #     VALUES (%s, %s, NOW(), %s, {data_cadastro_quebra}, 1, 0, %s, %s, %s)
+                                            # """, (cod_equipamento, cod_usina, hora_previsao, valores_atuais_str, valores_previstos_str, alarmes_ativos_str))
+
+                                            # await conn.commit()
+
                                             await cursor.execute("""
                                                 INSERT INTO machine_learning.valores_previsao 
                                                 (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra,alerta_80, alerta_100, valores_reais, valores_previstos, alarmes) 
@@ -6252,35 +7449,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                     
             except Exception as e:
                 print(f"Ocorreu um erro em enviar_alerta_80_100 ao processar o equipamento {cod_equipamento}: {str(e)}")
-                        
-                        
-                # for cod_usina, mensagens in alertas_por_usina.items():
-                #     async with pool.acquire() as conn:
-                #         async with conn.cursor() as cursor:
-                            
-                #             await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
-                #             result = await cursor.fetchone()
-                #             if result:
-                #                 nome_usina, cod_modelo_funcionamento = result
-                #                 print('equipamento', cod_equipamento,'nome usina',nome_usina,'o codigo de funcionamento e: ',cod_modelo_funcionamento)
-                                
-                #                 if cod_modelo_funcionamento not in [4, 12, 14]:
-                #                     print('\nequipamento', cod_equipamento,'nome usina',nome_usina,'o codigo de funcionamento e autorizado a mandar mensagem: ',cod_modelo_funcionamento)
-
-                #                     await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
-                #                     cod_usuarios = await cursor.fetchall()
-                #                     if cod_usuarios is not None:
-                                        
-                #                         nomes_usuarios = []
-
-                #                         for cod_usuario_tuple in cod_usuarios:
-                #                             cod_usuario = cod_usuario_tuple[0]
-                #                             if (cod_usina, cod_usuario) not in sem_mensagem_silenciado:
-                #                                 await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
-                #                                 result = await cursor.fetchone()
-                #                                 if result is not None:
-                #                                     id_telegram, nome_usuario, ativo = result
-                #                                     if ativo == 1:
 
         for cod_usina, mensagens in alertas_por_usina.items():
             async with pool.acquire() as conn:
@@ -6353,8 +7521,15 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                 nomes_usuarios_str = ', '.join(nomes_usuarios)
                                 id_grupo = await id_chat_grupo(pool)    
+                                botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+
+                                keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                                                        
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
+#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
+
                                 nomes_usuarios.clear()
                                 sys.stdout.flush()
 
@@ -6416,20 +7591,27 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                                                 await bot.send_message(id_grupo, f"🚫 O bot foi bloqueado pelo usuário {nome_usuario} ({cod_usuario})")
                                                             await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 1 WHERE cod_usuario = %s", (cod_usuario,))
                                                             await conn.commit()
-                                                            
+
                                 nomes_usuarios_str = ', '.join(nomes_usuarios)
-                                id_grupo = await id_chat_grupo(pool)    
+                                id_grupo = await id_chat_grupo(pool)
+
+                                botao_silenciar_usina = InlineKeyboardButton("Silenciar Usina", callback_data=f'silenciar_usina_{cod_usina}')
+                                botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
+
+                                keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+                                                        
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML')
+                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
+#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
                                 nomes_usuarios.clear()
                                 sys.stdout.flush()
 
-#        tempo_inicial = datetime.now()
-#        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-#        print('---------------------------------------------------- fim enviar_alerta_80_100 -----------------------------------------------------------------',data_cadastro_formatada,'\n')
+        tempo_inicial = datetime.now()
+        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+        print('---------------------------------------------------- fim enviar_alerta_80_100 -----------------------------------------------------------------',data_cadastro_formatada,'\n')
 
 #        await asyncio.sleep(10)
-        await asyncio.sleep(120)
+        await asyncio.sleep(180)
       
 
 
@@ -6491,7 +7673,7 @@ async def enviar_previsao_valor_equipamento(message: types.Message, id_telegram=
     user_input = message.text.lstrip('/')
     username = user_input
     chat_id = message.chat.id
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     valores_atuais_str = 0
 
     async with pool.acquire() as conn:
@@ -6677,7 +7859,7 @@ async def enviar_previsao_valor_equipamento(message: types.Message, id_telegram=
 
 
 async def enviar_previsao_valor_usina_menu(cod_usina, chat_id=None):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     codigos_GMG = await selecionar_GMG(pool)
 
     placeholders = ', '.join(['%s'] * len(codigos_GMG))
@@ -6734,7 +7916,7 @@ async def enviar_previsao_valor_usina_menu(cod_usina, chat_id=None):
 
 
 async def enviar_previsao_valor_equipamento_menu(chat_id, cod_equipamento):
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute("SELECT nome, cod_usina FROM sup_geral.equipamentos WHERE codigo = %s AND ativo = 1", (cod_equipamento,) )
@@ -6767,7 +7949,7 @@ async def enviar_previsao_valor_equipamento_menu(chat_id, cod_equipamento):
 
 
 
-
+'''
 async def close_db(pool):
     async with pool.acquire() as conn:
         async with conn.cursor() as cursor:
@@ -6806,15 +7988,13 @@ async def close_db(pool):
                                 await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
                                 print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
 
-                '''
-                await cursor.execute("""
-                    DELETE FROM machine_learning.relatorio_quebras 
-                    WHERE cod_equipamento = %s 
-                    AND (data_cadastro_quebra IS NULL OR data_cadastro_previsto IS NULL)
-                """, (cod_equipamento,))
-                await conn.commit()
-                print(f"Remoção da linha da tabela de relatório de quebras para o equipamento {cod_equipamento}.")
-                '''
+                # await cursor.execute("""
+                #     DELETE FROM machine_learning.relatorio_quebras 
+                #     WHERE cod_equipamento = %s 
+                #     AND (data_cadastro_quebra IS NULL OR data_cadastro_previsto IS NULL)
+                # """, (cod_equipamento,))
+                # await conn.commit()
+                # print(f"Remoção da linha da tabela de relatório de quebras para o equipamento {cod_equipamento}.")
 
             print('db close 0')
 
@@ -6836,7 +8016,7 @@ async def close_db(pool):
 
 
 async def run_close_db():
-    pool = await create_pool()
+    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
     if pool is not None:
         await close_db(pool)
         await pool.close()
@@ -6852,6 +8032,153 @@ def close_db_on_exit():
 
 atexit.register(close_db_on_exit)
 
+
+'''
+
+
+async def close_db(pool):
+    
+    # if pool is None:
+    #     print("A conexão com o banco de dados não foi estabelecida.")
+    #     return
+    
+    # print('fechando o banco e limpando listas')
+    # async with pool.acquire() as conn:
+    #     async with conn.cursor() as cursor:
+    #         for cod_equipamento in cod_equipamentos_close:
+    #             await cursor.execute("""
+    #             UPDATE machine_learning.leituras_consecutivas
+    #             SET alerta = 0
+    #             WHERE cod_equipamento = %s
+    #             """, (int(cod_equipamento),))
+    #             await conn.commit()
+
+    #             await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET receber_alarme = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
+    #             await conn.commit()
+    #         #    print('db close receber_alarme 0', cod_equipamento)
+
+    #             await cursor.execute("SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme FROM machine_learning.telegram_silenciar_bot")
+    #             results = await cursor.fetchall()
+                
+    #             for result in results:
+    #                 cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
+
+    #                 await cursor.execute("SELECT nome, cod_usina FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+    #                 equipamento_result = await cursor.fetchone()
+    #                 if equipamento_result is not None:
+    #                     nome, cod_usina_silenciada = equipamento_result
+                        
+    #                     if tempo_silenciado > 0:
+    #                         if receber_alarme == 1:
+    #                             await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET tempo_silenciado = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
+    #                             print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
+    #                         elif receber_alarme == 0:
+    #                             await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
+    #                             print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
+    #                     elif tempo_silenciado == 0:
+    #                         if receber_alarme == 0:
+    #                             await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
+    #                             print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
+
+    #         print('db close 0')
+    if pool is None:
+        print("A conexão com o banco de dados não foi estabelecida.")
+        return
+    
+    print('fechando o banco e limpando listas')
+    
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            # Coloca todos os `cod_equipamentos_close` em uma única query de update
+            if cod_equipamentos_close:
+                await cursor.executemany("""
+                    UPDATE machine_learning.leituras_consecutivas
+                    SET alerta = 0
+                    WHERE cod_equipamento = %s
+                    """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
+                await cursor.executemany("""
+                    UPDATE machine_learning.telegram_silenciar_bot
+                    SET receber_alarme = 0
+                    WHERE cod_equipamento = %s
+                    """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
+                
+                await conn.commit()  # Apenas um commit ao final
+
+            # Seleciona todos os dados da tabela para verificar status
+            await cursor.execute("""
+                SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme 
+                FROM machine_learning.telegram_silenciar_bot
+            """)
+            results = await cursor.fetchall()
+            
+            # Mapeia todos os equipamentos para reduzir consultas repetidas
+            equipamentos_map = {}
+            if results:
+                cod_equipamentos = [result[1] for result in results]  # Lista de cod_equipamento para filtrar
+                await cursor.executemany("""
+                    SELECT nome, cod_usina, codigo 
+                    FROM sup_geral.equipamentos 
+                    WHERE codigo = %s
+                """, [(cod_equipamento,) for cod_equipamento in cod_equipamentos])
+                
+                equipamento_results = await cursor.fetchall()
+                equipamentos_map = {equipamento_result[2]: equipamento_result for equipamento_result in equipamento_results}
+
+            # Processa cada resultado e realiza as atualizações necessárias
+            updates = []
+            deletes = []
+            for result in results:
+                cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
+                equipamento_info = equipamentos_map.get(cod_equipamento)
+
+                if equipamento_info:
+                    nome, cod_usina_silenciada, _ = equipamento_info
+                    
+                    if tempo_silenciado > 0:
+                        if receber_alarme == 1:
+                            updates.append(cod_equipamento)
+                            print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
+                        elif receber_alarme == 0:
+                            deletes.append(cod_equipamento)
+                            print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
+                    elif tempo_silenciado == 0 and receber_alarme == 0:
+                        deletes.append(cod_equipamento)
+                        print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
+
+            # Realiza batch updates para tempo_silenciado = 0
+            if updates:
+                await cursor.executemany("""
+                    UPDATE machine_learning.telegram_silenciar_bot
+                    SET tempo_silenciado = 0
+                    WHERE cod_equipamento = %s
+                """, [(cod_equipamento,) for cod_equipamento in updates])
+                
+            # Realiza batch deletes para remover as linhas da tabela
+            if deletes:
+                await cursor.executemany("""
+                    DELETE FROM machine_learning.telegram_silenciar_bot
+                    WHERE cod_equipamento = %s
+                """, [(cod_equipamento,) for cod_equipamento in deletes])
+                
+            await conn.commit()  # Apenas um commit ao final de todas as operações
+
+    print('db close 0')
+
+
+    # Limpar as listas
+    alertas_enviados.clear()
+    alertas_enviados_previsao.clear()
+    sem_mensagem_silenciado.clear()
+
+    cnx.close()
+    pool.close()  # Iniciar o fechamento do pool
+    await pool.wait_closed()  # Aguardar o fechamento completo
+    print('fechando conexao com o banco')
+    
+
+    
+    
+    
 def selecionar_GMG_sincrono():
     cursor.execute("SELECT codigo, ativo FROM sup_geral.tipos_equipamentos WHERE classe = 'GMG'")
     resultados = cursor.fetchall()
@@ -6925,51 +8252,83 @@ async def notificar_todos_os_usuarios(pool):
     await enviar_mensagem_para_grupo(pool)
     
 
+async def listar_tarefas_ativas():
+    tasks = asyncio.all_tasks()
+    for task in tasks:
+        print(f"Tarefa: {task.get_name()} - Estado: {task._state}")
 
 
-async def on_startup(dp):
-    dp.pool = await create_pool()
+
+
+# Inicializando o bot
+async def on_startup(dp: Dispatcher):
+    dp.pool = await create_pool()  # Reutilizando o pool criado durante a inicialização
     await criar_tabelas(dp.pool)
 
-    # Certifique-se de que as tasks estão sendo aguardadas
     try:
-        asyncio.create_task(processar_equipamentos_async(dp))
-        asyncio.create_task(outros_processos_async(dp))
+        # Cancelar quaisquer tarefas remanescentes que não foram finalizadas
+        for task in asyncio.all_tasks():
+            if task.get_name() in ["processos_menos_pesados", "processos_pesados"]:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    print(f"Tarefa {task.get_name()} cancelada na inicialização.")
+        
+        # Inicia os processos assíncronos sem travar o fluxo principal
+        asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
+        asyncio.create_task(processos_async_pesados(dp), name="processos_pesados")
     except Exception as e:
         print(f"Erro ao iniciar tarefas: {e}")
 
-async def processar_equipamentos_async(dp):
+# Função para processos menos pesados
+async def processos_async_menos_pesados(dp: Dispatcher):
     try:
         tabelas = 'sup_geral.leituras'
         cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
-        await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
-    except asyncio.CancelledError:
-        print("Tarefa de processamento de equipamentos cancelada.")
-    except Exception as e:
-        print(f"Erro durante o processamento dos equipamentos: {e}")
+        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '114', '21','76','25','20','77']
+#        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '114', '21','76','25','20','77']
 
-async def outros_processos_async(dp):
-    try:
-        tabelas = 'sup_geral.leituras'
-        cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
-
-        # Certifique-se de que as tarefas são aguardadas
+        # Processos leves em paralelo, não interferem no fluxo principal
         tarefas = [
-            asyncio.create_task(enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)),
-            asyncio.create_task(enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)),
             monitorar_leituras_consecutivas(dp.pool),
             verificar_alarmes(dp.pool),
             verificar_e_excluir_linhas_expiradas(dp.pool),
             monitor_log_file(),
             clean_temp_files(),
-            atualizar_usinas_usuario(dp.pool)
-        ]
-        await asyncio.gather(*tarefas)
-    except asyncio.CancelledError:
-        print("Tarefa de outros processos cancelada.")
-    except Exception as e:
-        print(f"Erro durante a execução de outros processos: {e}")
+            atualizar_usinas_usuario(dp.pool),
 
+            processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados_processar_equipamentos, dp.pool),
+            enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool),
+            enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+        ]
+        await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
+    except asyncio.CancelledError:
+        print("Tarefa de processos leves cancelada.")
+    except Exception as e:
+        print(f"Erro durante a execução dos processos leves: {e}")
+
+# Função para processos pesados
+async def processos_async_pesados(dp: Dispatcher):
+    try:
+    #    tabelas = 'sup_geral.leituras'
+    #    cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
+    #    cod_campo_especificados_processar_equipamentos = ['3', '21', '76', '114']
+    #    cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '114', '21','76','25','20','77']
+
+        # Processos pesados executando em segundo plano
+        tarefas = [
+            # processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados_processar_equipamentos, dp.pool),
+            # enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool),
+            # enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+        ]
+        await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
+    except asyncio.CancelledError:
+        print("Tarefa de processos pesados cancelada.")
+    except Exception as e:
+        print(f"Erro durante a execução dos processos pesados: {e}")
+
+# Criação de tabelas
 async def criar_tabelas(pool):
     await criar_tabela_usuarios_telegram(pool)
     await criar_tabela_relatorio_quebras(pool)
@@ -6980,16 +8339,60 @@ async def criar_tabelas(pool):
     await criar_tabela_falhas_gerais(pool)
     await criar_tabela_usinas_usuario(pool)
 
-async def on_shutdown(dp):
-    dp.pool.close()
-    await dp.pool.wait_closed()
-    
-if __name__ == '__main__':
-    try:
-        executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
-    except KeyboardInterrupt:
-        print("Interrompido pelo usuário")
 
+# Função principal que lida com botões sem interromper as tarefas
+async def tratar_botoes(dp):
+    @dp.message_handler(lambda message: message.text == "/relatorio")
+    async def handle_button(message):
+        # Aqui processa o botão
+        await message.answer("Processando botão...")
+
+    # Escuta os botões
+    await dp.start_polling()
+    
+    
+
+
+# async def shutdown(signal, loop):
+#     print(f"Recebido sinal de encerramento: {signal}. Cancelando tarefas...")
+    
+#     # Cancelar todas as tarefas pendentes
+#     tasks = [t for t in asyncio.all_tasks() if not t.done()]
+#     for task in tasks:
+#         task_name = task.get_name()
+#         print(f"Cancelando tarefa {task_name}")
+#         task.cancel()
+    
+#     await asyncio.gather(*tasks, return_exceptions=True)
+#     loop.stop()
+
+async def on_shutdown(dp: Dispatcher):
+    await close_db(dp.pool)
+    print("Fechando o pool de conexões...")
+    if dp.pool is not None:
+        dp.pool.close()
+        await dp.pool.wait_closed()
+
+
+if __name__ == "__main__":
+    from aiogram import executor
+    from bot import dp  # Supondo que 'dp' seja seu Dispatcher
+    
+    # Iniciar o polling com os callbacks on_startup e on_shutdown
+    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    
+
+# Finalização das tasks
+# async def on_shutdown(dp: Dispatcher):
+#     dp.pool.close()
+#     await dp.pool.wait_closed()
+
+# if __name__ == "__main__":
+#     from aiogram import executor
+#     from bot import dp  # Supondo que 'dp' seja seu Dispatcher
+    
+#     # Iniciar o polling com os callbacks on_startup e on_shutdown
+#     executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
 
 
 
@@ -6999,7 +8402,7 @@ if __name__ == '__main__':
 
 async def on_startup(dp):
     # Iniciar o pool de conexões
-    dp.pool = await create_pool()
+    dp.pool = dp.pool  # Reutilizando o pool criado durante a inicialização
 
     tabelas = 'sup_geral.leituras'
     cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)

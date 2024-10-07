@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultados das Loterias</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ccc;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #eee;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .footer {
+            text-align: center;
+            padding: 10px;
+            background-color: #333;
+            color: white;
+            position: fixed;
+            width: 100%;
+            bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Últimos Resultados das Loterias</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Nome</th>
+                <th>Concurso</th>
+                <th>Data</th>
+                <th>Números</th>
+                <th>Acumulado</th>
+                <th>Prêmio</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for concurso in concursos %}
+            <tr>
+                <td>{{ concurso[1] }}</td>
+                <td>{{ concurso[2] }}</td>
+                <td>{{ concurso[3] }}</td>
+                <td>{{ concurso[4] }}</td>
+                <td>{{ concurso[5] }}</td>
+                <td>{{ concurso[6] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        © 2024 - Resultados das Loterias
+    </div>
+</body>
+</html>

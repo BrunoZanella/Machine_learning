@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultados das Loterias</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-top: 30px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        table {
+            width: 80%;
+            margin-top: 20px;
+            border-collapse: collapse;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: center;
+            border-bottom: 1px solid #dddddd;
+        }
+
+        th {
+            background-color: #34495e;
+            color: #ffffff;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        tr:hover {
+            background-color: #e8e8e8;
+            cursor: pointer;
+            transform: scale(1.01);
+            transition: transform 0.2s ease-in-out;
+        }
+
+        td {
+            color: #2c3e50;
+            font-size: 16px;
+        }
+
+        .dezenas {
+            background-color: #16a085;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        /* Botões de ação */
+        .button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #2980b9;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            text-transform: uppercase;
+            cursor: pointer;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-right: 10px;
+        }
+
+        .button:hover {
+            background-color: #1f618d;
+            transition: background-color 0.3s ease;
+        }
+
+        /* Responsividade */
+        @media (max-width: 768px) {
+            table {
+                width: 100%;
+            }
+
+            th, td {
+                padding: 10px;
+            }
+
+            .button {
+                width: 100%;
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Resultados das Loterias</h1>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Tipo Jogo</th>
+                <th>Número do Concurso</th>
+                <th>Data de Apuração</th>
+                <th>Dezenas Sorteadas</th>
+                <th>Próximo concurso</th>
+                <th>Acumulou</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for concurso in concursos %}
+            <tr>
+                <td>{{ concurso.tipo_jogo }}</td>
+                <td>{{ concurso.numero_concurso }}</td>
+                <td>{{ concurso.data_apuracao }}</td>
+                <td class="dezenas">{{ concurso.dezenas_sorteadas }}</td>
+                <td>{{ concurso.proximo_concurso }}</td>
+                <td>{{ concurso.acumulou }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Botões de ação -->
+    <div>
+        <button class="button" onclick="location.reload()">Atualizar Resultados</button>
+        <button class="button" onclick="atualizarConcursos()">Atualizar Concursos</button>
+    </div>
+
+    <!-- JavaScript para requisição assíncrona -->
+    <script>
+        function atualizarConcursos() {
+            fetch('/atualizar_concursos')
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message); // Mostra a mensagem de sucesso ou erro
+                    location.reload(); // Recarrega a página para mostrar os novos dados
+                })
+                .catch(error => {
+                    console.error('Erro ao atualizar concursos:', error);
+                });
+        }
+    </script>
+    
+</body>
+</html>
