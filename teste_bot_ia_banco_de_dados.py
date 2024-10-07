@@ -1,6 +1,46 @@
 # Chat with an intelligent assistant in your terminal
 from openai import OpenAI
 
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+import aiomysql
+import asyncio
+import google.generativeai as genai
+import re
+import spacy
+from aiogram.types import ParseMode
+from aiogram.utils import executor
+
+
+# Carregando o modelo SpaCy para Português
+nlp = spacy.load('pt_core_news_sm')
+
+# Configurações
+TOKEN = "6674960909:AAEf4Ky64lM6NILX3wZ6HJEASTt42Q2vopc"
+API_KEY = 'AIzaSyDf9hqXZvxOiCKaFSiIa0byrfEctP5mflI'
+
+genai.configure(api_key=API_KEY)
+# Configuração de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configuração do bot
+bot = Bot(token=TOKEN)
+dp = Dispatcher(bot, storage=MemoryStorage())
+dp.middleware.setup(LoggingMiddleware())
+
+async def create_pool():
+    return await aiomysql.create_pool(
+        host="192.168.4.50",
+        user="bot_consultas",
+        password="@ssistente_2024",
+        db="machine_learning",
+        autocommit=True
+    )
+
+
 # Point to the local server
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
