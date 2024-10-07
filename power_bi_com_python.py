@@ -470,6 +470,7 @@ async def main():
 
     # Adicionar a logo no canto esquerdo
     with placeholder_logo.container():
+    #    st.logo('../imagens/log_brg_novo_branco_2.png')
         st.logo('log_brg_novo_branco_2.png')
     #    st.image('../imagens/log_brg_novo_branco_2.png', width=150)
         st.markdown('<div class="main-container">', unsafe_allow_html=True)
@@ -568,7 +569,7 @@ async def main():
                         return ''
 
                 # Aplica o estilo de cor de fundo para a coluna 'Estado'
-                styled_df = df.style.applymap(color_estado, subset=['Estado'])
+                styled_df = df.style.map(color_estado, subset=['Estado'])
 
                 # Centraliza o texto de todas as células
                 styled_df = styled_df.set_properties(**{'text-align': 'center'})
