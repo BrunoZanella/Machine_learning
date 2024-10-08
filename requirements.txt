@@ -73,7 +73,6 @@ lightgbm==4.4.0
 llvmlite==0.43.0
 lxml==5.3.0
 magic-filter==1.0.12
-matplotlib==3.7.5
 Markdown==3.4.3
 markdown-it-py==2.2.0
 markdownlit==0.0.7
