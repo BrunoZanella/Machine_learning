@@ -3737,10 +3737,11 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
             print(f"Parâmetros encontrados para {chave_motor}\n")
             break
 
+    limites = {}
     # Se não encontrar os parâmetros, avisar
     if not parametros_motor:
         print(f"Parâmetros não encontrados para motor {motor} da marca {marca}\n")
-        return df
+        return df, limites
 
     # Normalizar as chaves para remover "(Bar)" ou outros elementos entre parênteses
     parametros_motor_normalizado = {re.sub(r'\s*\(.*?\)\s*', '', chave): valor for chave, valor in parametros_motor.items()}
