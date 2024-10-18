@@ -336,126 +336,126 @@ async def fetch_data():
     # Retornar os valores de forma segura, com valores padrão se necessário
     return df_log, alerta_count, max_value, count_previsto
 
-async def fetch_data():
-    # Cria o pool de conexão assíncrono usando as configurações do secrets.toml
-    pool = await aiomysql.create_pool(
-        host=st.secrets["mysql"]["host"],
-        port=int(st.secrets["mysql"]["port"]),
-        user=st.secrets["mysql"]["user"],
-        password=st.secrets["mysql"]["password"],
-        db=st.secrets["mysql"]["database"],
-        minsize=st.secrets["mysql"]["minsize"],
-        maxsize=st.secrets["mysql"]["maxsize"]
-    )
+# async def fetch_data():
+#     # Cria o pool de conexão assíncrono usando as configurações do secrets.toml
+#     pool = await aiomysql.create_pool(
+#         host=st.secrets["mysql"]["host"],
+#         port=int(st.secrets["mysql"]["port"]),
+#         user=st.secrets["mysql"]["user"],
+#         password=st.secrets["mysql"]["password"],
+#         db=st.secrets["mysql"]["database"],
+#         minsize=st.secrets["mysql"]["minsize"],
+#         maxsize=st.secrets["mysql"]["maxsize"]
+#     )
 
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
+#     async with pool.acquire() as conn:
+#         async with conn.cursor() as cursor:
 
-            # Definir o fuso horário de São Paulo
-            sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
+#             # Definir o fuso horário de São Paulo
+#             sao_paulo_tz = pytz.timezone('America/Sao_Paulo')
 
-            # Calcular o horário de uma hora atrás no fuso horário de São Paulo
-            now = datetime.now(sao_paulo_tz)
-            one_hour_ago = now - timedelta(hours=1)
-            now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+#             # Calcular o horário de uma hora atrás no fuso horário de São Paulo
+#             now = datetime.now(sao_paulo_tz)
+#             one_hour_ago = now - timedelta(hours=1)
+#             now_str = now.strftime('%Y-%m-%d %H:%M:%S')
 
-            # Query única para combinar todas as informações necessárias
-            query = f"""
-                SELECT 
-                    lrq.cod_usina AS cod_usina,
-                    lrq.cod_equipamento AS cod_equipamento,
-                    lrq.data_cadastro_previsto AS data_cadastro_previsto,
-                    lrq.data_cadastro_quebra AS data_cadastro_quebra,
-                    usinas.nome AS nome_usina,
-                    eqp.nome AS nome_equipamento,
-                    SUM(COALESCE(lc.valor_1, 0) + COALESCE(lc.valor_2, 0) + COALESCE(lc.valor_3, 0) + COALESCE(lc.valor_4, 0) + COALESCE(lc.valor_5, 0)) AS max_value,
-                    COUNT(DISTINCT lrq.cod_equipamento) AS count_previsto_quebra,
-                    lc.alerta AS alerta,
-                    lc.cod_campo AS cod_campo,
-                    vp.alerta_80 AS alerta_80,
-                    vp.alerta_100 AS alerta_100,
-                    vp.previsao AS previsao
-                FROM log_relatorio_quebras lrq
-                LEFT JOIN sup_geral.usinas usinas ON lrq.cod_usina = usinas.codigo
-                LEFT JOIN sup_geral.equipamentos eqp ON lrq.cod_equipamento = eqp.codigo
-                LEFT JOIN leituras_consecutivas lc ON lc.cod_equipamento = lrq.cod_equipamento AND lc.cod_campo = 114
-                LEFT JOIN valores_previsao vp ON vp.cod_equipamento = lrq.cod_equipamento 
-                    AND (ABS(TIMESTAMPDIFF(SECOND, vp.data_cadastro_previsto, lrq.data_cadastro_previsto)) < 300 
-                    OR ABS(TIMESTAMPDIFF(SECOND, vp.data_cadastro_previsto, lrq.data_cadastro_quebra)) < 300)
-                WHERE DATE(lrq.data_cadastro_previsto) = CURDATE() 
-                   OR DATE(lrq.data_cadastro_quebra) = CURDATE()
-                GROUP BY lrq.cod_usina, lrq.cod_equipamento
-            """
+#             # Query única para combinar todas as informações necessárias
+#             query = f"""
+#                 SELECT 
+#                     lrq.cod_usina AS cod_usina,
+#                     lrq.cod_equipamento AS cod_equipamento,
+#                     lrq.data_cadastro_previsto AS data_cadastro_previsto,
+#                     lrq.data_cadastro_quebra AS data_cadastro_quebra,
+#                     usinas.nome AS nome_usina,
+#                     eqp.nome AS nome_equipamento,
+#                     SUM(COALESCE(lc.valor_1, 0) + COALESCE(lc.valor_2, 0) + COALESCE(lc.valor_3, 0) + COALESCE(lc.valor_4, 0) + COALESCE(lc.valor_5, 0)) AS max_value,
+#                     COUNT(DISTINCT lrq.cod_equipamento) AS count_previsto_quebra,
+#                     lc.alerta AS alerta,
+#                     lc.cod_campo AS cod_campo,
+#                     vp.alerta_80 AS alerta_80,
+#                     vp.alerta_100 AS alerta_100,
+#                     vp.previsao AS previsao
+#                 FROM log_relatorio_quebras lrq
+#                 LEFT JOIN sup_geral.usinas usinas ON lrq.cod_usina = usinas.codigo
+#                 LEFT JOIN sup_geral.equipamentos eqp ON lrq.cod_equipamento = eqp.codigo
+#                 LEFT JOIN leituras_consecutivas lc ON lc.cod_equipamento = lrq.cod_equipamento AND lc.cod_campo = 114
+#                 LEFT JOIN valores_previsao vp ON vp.cod_equipamento = lrq.cod_equipamento 
+#                     AND (ABS(TIMESTAMPDIFF(SECOND, vp.data_cadastro_previsto, lrq.data_cadastro_previsto)) < 300 
+#                     OR ABS(TIMESTAMPDIFF(SECOND, vp.data_cadastro_previsto, lrq.data_cadastro_quebra)) < 300)
+#                 WHERE DATE(lrq.data_cadastro_previsto) = CURDATE() 
+#                    OR DATE(lrq.data_cadastro_quebra) = CURDATE()
+#                 GROUP BY lrq.cod_usina, lrq.cod_equipamento
+#             """
 
-            await cursor.execute(query)
-            result = await cursor.fetchall()
+#             await cursor.execute(query)
+#             result = await cursor.fetchall()
 
-            if not result:
-                return pd.DataFrame(columns=['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, 100, 0
+#             if not result:
+#                 return pd.DataFrame(columns=['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']), 0, 100, 0
 
-            # Dicionário para armazenar resultados
-            data_dict = {
-                'df_log': [],
-                'max_value': 0,
-                'alerta_count': 0,
-                'count_previsto': 0,
-            }
+#             # Dicionário para armazenar resultados
+#             data_dict = {
+#                 'df_log': [],
+#                 'max_value': 0,
+#                 'alerta_count': 0,
+#                 'count_previsto': 0,
+#             }
 
-            equipamento_alertas = {}
+#             equipamento_alertas = {}
 
-            for row in result:
-                cod_usina, cod_equipamento, data_cadastro_previsto, data_cadastro_quebra, nome_usina, nome_equipamento, max_value, count_previsto_quebra, alerta, cod_campo, alerta_80, alerta_100, previsao = row
+#             for row in result:
+#                 cod_usina, cod_equipamento, data_cadastro_previsto, data_cadastro_quebra, nome_usina, nome_equipamento, max_value, count_previsto_quebra, alerta, cod_campo, alerta_80, alerta_100, previsao = row
 
-                # Adicionar dados ao dicionário
-                data_dict['df_log'].append({
-                    'cod_usina': cod_usina,
-                    'cod_equipamento': cod_equipamento,
-                    'data_cadastro_previsto': data_cadastro_previsto,
-                    'data_cadastro_quebra': data_cadastro_quebra,
-                    'nome_usina': nome_usina,
-                    'nome_equipamento': nome_equipamento,
-                    'estado': 'Parada' if data_cadastro_quebra else 'Sem parada',
-                    'alerta': 'Sim' if alerta == 1 else 'Não',
-                    'tipo_alerta': None,  # Preenchido posteriormente
-                })
+#                 # Adicionar dados ao dicionário
+#                 data_dict['df_log'].append({
+#                     'cod_usina': cod_usina,
+#                     'cod_equipamento': cod_equipamento,
+#                     'data_cadastro_previsto': data_cadastro_previsto,
+#                     'data_cadastro_quebra': data_cadastro_quebra,
+#                     'nome_usina': nome_usina,
+#                     'nome_equipamento': nome_equipamento,
+#                     'estado': 'Parada' if data_cadastro_quebra else 'Sem parada',
+#                     'alerta': 'Sim' if alerta == 1 else 'Não',
+#                     'tipo_alerta': None,  # Preenchido posteriormente
+#                 })
 
-                # Acumular valor máximo
-                data_dict['max_value'] = max(data_dict['max_value'], max_value if max_value and max_value > 0 else 100)
+#                 # Acumular valor máximo
+#                 data_dict['max_value'] = max(data_dict['max_value'], max_value if max_value and max_value > 0 else 100)
 
-                # Contagem de alertas
-                if alerta == 1 and cod_campo == 114:
-                    data_dict['alerta_count'] += 1
+#                 # Contagem de alertas
+#                 if alerta == 1 and cod_campo == 114:
+#                     data_dict['alerta_count'] += 1
 
-                # Verificar e acumular alertas específicos para o equipamento
-                if cod_equipamento not in equipamento_alertas:
-                    equipamento_alertas[cod_equipamento] = set()
+#                 # Verificar e acumular alertas específicos para o equipamento
+#                 if cod_equipamento not in equipamento_alertas:
+#                     equipamento_alertas[cod_equipamento] = set()
 
-                if alerta_80 == 1:
-                    equipamento_alertas[cod_equipamento].add("80%")
-                if alerta_100 == 1:
-                    equipamento_alertas[cod_equipamento].add("100%")
-                if previsao == 1:
-                    equipamento_alertas[cod_equipamento].add("Previsão")
+#                 if alerta_80 == 1:
+#                     equipamento_alertas[cod_equipamento].add("80%")
+#                 if alerta_100 == 1:
+#                     equipamento_alertas[cod_equipamento].add("100%")
+#                 if previsao == 1:
+#                     equipamento_alertas[cod_equipamento].add("Previsão")
 
-            # Atualizar o DataFrame com os tipos de alerta
-            for entry in data_dict['df_log']:
-                cod_equipamento = entry['cod_equipamento']
-                entry['tipo_alerta'] = ', '.join(sorted(equipamento_alertas[cod_equipamento])) if cod_equipamento in equipamento_alertas else None
+#             # Atualizar o DataFrame com os tipos de alerta
+#             for entry in data_dict['df_log']:
+#                 cod_equipamento = entry['cod_equipamento']
+#                 entry['tipo_alerta'] = ', '.join(sorted(equipamento_alertas[cod_equipamento])) if cod_equipamento in equipamento_alertas else None
 
-            # Converter para DataFrame
-            df_log = pd.DataFrame(data_dict['df_log'])
+#             # Converter para DataFrame
+#             df_log = pd.DataFrame(data_dict['df_log'])
 
-            # Adicionar a contagem de `count_previsto`
-            data_dict['count_previsto'] = count_previsto_quebra if count_previsto_quebra else 0
+#             # Adicionar a contagem de `count_previsto`
+#             data_dict['count_previsto'] = count_previsto_quebra if count_previsto_quebra else 0
 
-            # Ordenar as colunas na ordem desejada, incluindo 'tipo_alerta'
-            df_log = df_log[['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']]
+#             # Ordenar as colunas na ordem desejada, incluindo 'tipo_alerta'
+#             df_log = df_log[['estado', 'alerta', 'tipo_alerta', 'nome_usina', 'nome_equipamento', 'cod_equipamento', 'data_cadastro_previsto', 'data_cadastro_quebra']]
 
-    pool.close()
-    await pool.wait_closed()
+#     pool.close()
+#     await pool.wait_closed()
 
-    # Retornar os valores de forma segura, com valores padrão se necessário
-    return df_log, data_dict['alerta_count'], data_dict['max_value'], data_dict['count_previsto']
+#     # Retornar os valores de forma segura, com valores padrão se necessário
+#     return df_log, data_dict['alerta_count'], data_dict['max_value'], data_dict['count_previsto']
 
 import streamlit.components.v1 as components
 
