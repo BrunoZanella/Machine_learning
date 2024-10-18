@@ -35,7 +35,6 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.utils import executor
-import aiomysql
 import google.generativeai as genai
 from datetime import datetime
 import magic
@@ -3252,7 +3251,7 @@ async def teste_menu(message: types.Message):
                                         valores_atuais = await cursor.fetchone()
                                         if valores_atuais is not None:
                                             if all(valor != 0 for valor in valores_atuais):
-                                                coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(equipamento), pool)
+                                                coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficientee(int(equipamento), pool)
                                                 previsoes, alerta = await fazer_previsao(valores_atuais, coeficiente_existente, intercepto_existente, int(equipamento), pool)
 
                                                 if isinstance(previsoes, int):
@@ -3347,6 +3346,8 @@ async def obter_equipamentos_validos(tabelas, pool):
 
 async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     while True:
+        tempo_inicial = datetime.now()
+        print(tempo_inicial)
         for cod_equipamento in cod_equipamentos:
             # Inicializando dicionário para armazenar os valores dos últimos 5 dados por campo
             valores = {cod: [0, 0, 0, 0, 0] for cod in cod_campo_especificados}
@@ -3424,6 +3425,10 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
                     continue
                 else:
                     raise
+
+        tempo_final = datetime.now()
+        total = tempo_final - tempo_inicial
+        print('\ntempo total de processamento',total)
 
         # Intervalo entre execuções
         await asyncio.sleep(10)
@@ -3519,7 +3524,7 @@ from pmdarima import auto_arima
 
 
 
-async def verificar_e_obter_coeficiente(cod_equipamento, pool):
+async def verificar_e_obter_coeficiente_novo(cod_equipamento, pool):
     try:
         coeficientes = {}
         interceptos = {}
@@ -4104,7 +4109,7 @@ async def fazer_previsao_sempre_alerta(cod_equipamento, pool, equipamentos_ativo
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}
 
                 # Verificar se a diferença é maior que 15 minutos
-                if (agora - data_cadastro) > timedelta(minutes=10):
+                if (agora - data_cadastro) > timedelta(minutes=15):
                 #    print(f"Equipamento {cod_equipamento}: Ignorado, data_cadastro é mais de 10 minutos atrás.")
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}
     
@@ -4123,7 +4128,7 @@ async def fazer_previsao_sempre_alerta(cod_equipamento, pool, equipamentos_ativo
 
 
                 # Obter coeficientes e interceptos
-                coeficientes, interceptos = await verificar_e_obter_coeficiente(cod_equipamento, pool)
+                coeficientes, interceptos = await verificar_e_obter_coeficiente_novo(cod_equipamento, pool)
 
                 if not coeficientes or not interceptos:
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}
@@ -4286,55 +4291,6 @@ async def fazer_previsao_sempre_alerta(cod_equipamento, pool, equipamentos_ativo
 
 
 
-# Dicionário de dependência para as previsões
-
-# lista_parametros_previsao = {
-#     'Load Speed': {
-#         'tipo': 'previsao',  # Definindo o tipo da chave principal
-#         'acima': {
-#             'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}, 
-#         },
-#         'abaixo': {
-#             'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
-#         },
-#         'tipo': 'real',  # Definindo o tipo da chave principal
-#         'acima': {
-#             'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}, 
-#         },
-#         'abaixo': {
-#             'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
-#         },
-#     },
-#     'Pressão do Óleo': {
-#         'tipo': 'previsao',  # Definindo o tipo da chave principal
-#         'acima': {
-#             'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
-#         },
-#         'abaixo': {
-#             'Temperatura da Água': {'tipo': 'real', 'condicao': 'abaixo'}
-#         },
-
-#     },
-#     'Temperatura da Água': {
-#         'tipo': 'previsao',  # Definindo o tipo da chave principal
-#         'acima': {
-#             'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}, 
-#         },
-#         'abaixo': {
-#             'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}, 
-#         }
-#     },
-#     'Temperatura do ar de admissão': {
-#         'tipo': 'previsao',  # Definindo o tipo da chave principal
-#         'acima': {
-#             'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}, 
-#         },
-#         'abaixo': {
-#             'RPM': {'tipo': 'previsao', 'condicao': 'acima'}, 
-#         }
-#     },
-# }
-
 lista_parametros_previsao = {
     'Load Speed': {
         'previsao': {
@@ -4427,6 +4383,7 @@ lista_parametros_previsao = {
 
 
 async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool, equipamentos_ativos):
+    equipamentos_alertados = []  # Lista para armazenar equipamentos que já foram alertados
 
     while True:
         for cod_equipamento in cod_equipamentos:
@@ -4439,14 +4396,25 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         if valores_atuais_114 is None:
                             continue
 
+
+                        # Verifica se todos os valores são 0
+                        if all(valor == 0 for valor in valores_atuais_114):
+                            if cod_equipamento in equipamentos_alertados:
+                                # Remove o equipamento da lista se já foi alertado e todos os valores são 0
+                                equipamentos_alertados.remove(cod_equipamento)
+                                print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
+                            continue
+
+
+                        if cod_equipamento in equipamentos_alertados:
+                            print(f"Equipamento {cod_equipamento} já foi alertado anteriormente. Pulando...")
+                            continue
+
                         # Função para fazer previsões e obter as contagens
                         nome_equipamento, nome_usina, cod_usina, valores_atuais, previsoes, contagem_abaixo_do_limite, contagem_acima_do_limite, contagem_abaixo_do_limite_previsao, contagem_acima_do_limite_previsao = await fazer_previsao_sempre_alerta(cod_equipamento, pool, equipamentos_ativos)
 
                         if previsoes is None or contagem_abaixo_do_limite is None or contagem_acima_do_limite is None:
                             continue
-
-                        # Imprimir as previsões e contagens para depuração
-                    #    print(f"\n{cod_equipamento} - \nvalores_atuais: {valores_atuais} \nPrevisões: {previsoes} \n[contagem_abaixo_do_limite - {contagem_abaixo_do_limite}\ncontagem_acima_do_limite - {contagem_acima_do_limite}]\n[contagem_abaixo_do_limite_previsao, {contagem_abaixo_do_limite_previsao}\ncontagem_acima_do_limite_previsao, {contagem_acima_do_limite_previsao}]")
 
                         # Obtém o id_telegram do cod_usuario=374
                         await cursor.execute("SELECT id_telegram FROM usuarios_telegram WHERE cod_usuario = %s", (374,))
@@ -4457,109 +4425,6 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                             return
 
                         id_usuario = id_telegram_result[0]
-    
-                        '''
-                        # Verificar as condições com base no dicionário lista_parametros_previsao
-                        for chave_principal, condicoes in lista_parametros_previsao.items():
-                            if chave_principal in previsoes:
-                                tipo_chave_principal = condicoes.get('tipo', 'real')  # Obtém o tipo da chave principal
-                                print(f'\nChave principal: {chave_principal}, Tipo: {tipo_chave_principal}')
-                                
-                                # Escolher as variáveis de contagem com base no tipo da chave principal
-                                if tipo_chave_principal == 'real':
-                                    contagem_acima = contagem_acima_do_limite
-                                    contagem_abaixo = contagem_abaixo_do_limite
-                                elif tipo_chave_principal == 'previsao':
-                                    contagem_acima = contagem_acima_do_limite_previsao
-                                    contagem_abaixo = contagem_abaixo_do_limite_previsao
-
-                                # Verificar 'acima do limite'
-                                if contagem_acima.get(chave_principal, 0) == 1:
-                                    condicoes_acima = condicoes.get('acima', {})
-                                    print(f"Condições 'acima': {condicoes_acima}")
-                                    todos_parametros_ok = True
-                                    parametros_violados = []
-
-                                    for subparametro, detalhes in condicoes_acima.items():
-                                        tipo = detalhes['tipo']
-                                        condicao = detalhes['condicao']
-                                        print(f"Subparâmetro: {subparametro}, Tipo: {tipo}, Condição: {condicao}")
-
-                                        if tipo == 'real':
-                                            if condicao == 'acima' and contagem_acima.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado acima)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
-                                                break
-                                            elif condicao == 'abaixo' and contagem_abaixo.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado abaixo)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
-                                                break
-                                        elif tipo == 'previsao':
-                                            if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado acima na previsão)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
-                                                break
-                                            elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado abaixo na previsão)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
-                                                break
-
-                                    if todos_parametros_ok:
-                                        mensagem = (f"Alerta no equipamento {cod_equipamento}\n Previsão para {chave_principal} acima do limite.\n "
-#                                                    f"Verifique os seguintes parâmetros relacionados:\n {', '.join(parametros_violados)}.")
-                                                    f"Verifique os seguintes parâmetros relacionados:\n {', '.join(condicoes_acima)}.")
-                                        print(mensagem)
-                                        await bot.send_message(id_usuario, mensagem)
-
-                                # Verificar 'abaixo do limite'
-                                if contagem_abaixo.get(chave_principal, 0) == 1:
-                                    condicoes_abaixo = condicoes.get('abaixo', {})
-                                    print(f"Condições 'abaixo': {condicoes_abaixo}")
-                                    todos_parametros_ok = True
-                                    parametros_violados = []
-
-                                    for subparametro, detalhes in condicoes_abaixo.items():
-                                        tipo = detalhes['tipo']
-                                        condicao = detalhes['condicao']
-                                        print(f"Subparâmetro: {subparametro}, Tipo: {tipo}, Condição: {condicao}")
-
-                                        if tipo == 'real':
-                                            if condicao == 'acima' and contagem_acima.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado acima)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
-                                                break
-                                            elif condicao == 'abaixo' and contagem_abaixo.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado abaixo)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
-                                                break
-                                        elif tipo == 'previsao':
-                                            if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado acima na previsão)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
-                                                break
-                                            elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
-                                                todos_parametros_ok = False
-                                                parametros_violados.append(f"{subparametro} (esperado abaixo na previsão)")
-                                                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
-                                                break
-
-                                    if todos_parametros_ok:
-                                        mensagem = (f"Alerta no equipamento {cod_equipamento}\n Previsão para {chave_principal} abaixo do limite.\n "
-#                                                    f"Verifique os seguintes parâmetros relacionados:\n{', '.join(parametros_violados)}.")
-                                                    f"Verifique os seguintes parâmetros relacionados:\n{', '.join(condicoes_abaixo)}.")
-
-                                        print(mensagem)
-                                        await bot.send_message(id_usuario, mensagem)
-                            '''
-
-
 
                         # Verificar as condições com base no dicionário lista_parametros_previsao
                         for chave_principal, condicoes in lista_parametros_previsao.items():
@@ -4642,6 +4507,10 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                 print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_acima}')
                                                 await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
 
+                                                # Adicionar o equipamento à lista de alertados
+                                                equipamentos_alertados.append(cod_equipamento)
+                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
+
                                         # Verificar 'abaixo do limite'
                                         if contagem_abaixo.get(chave_principal, 0) == 1:
                                             condicoes_abaixo = condicoes[tipo_chave_principal].get('abaixo', {})
@@ -4704,160 +4573,13 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                 print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_abaixo}')
                                                 await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
 
-
-
-                        # # Verificar as condições com base no dicionário lista_parametros_previsao
-                        # for chave_principal, condicoes in lista_parametros_previsao.items():
-                        #     if chave_principal in previsoes:
-                        #         tipo_chave_principal = condicoes.get('tipo', 'real')  # Obtém o tipo da chave principal
-                        #         print(f'\nChave principal: {chave_principal}, Tipo: {tipo_chave_principal}')
-
-                        #         # Escolher as variáveis de contagem com base no tipo da chave principal
-                        #         if tipo_chave_principal == 'real':
-                        #             contagem_acima = contagem_acima_do_limite
-                        #             contagem_abaixo = contagem_abaixo_do_limite
-                        #         elif tipo_chave_principal == 'previsao':
-                        #             contagem_acima = contagem_acima_do_limite_previsao
-                        #             contagem_abaixo = contagem_abaixo_do_limite_previsao
-
-                        #         # Verificar 'acima do limite'
-                        #         if contagem_acima.get(chave_principal, 0) == 1:
-                        #             condicoes_acima = condicoes.get('acima', {})
-                        #             print(f"Condições 'acima': {condicoes_acima}")
-                        #             todos_parametros_ok = True
-                        #             parametros_violados = []
-
-                        #             for subparametro, detalhes in condicoes_acima.items():
-                        #                 tipo = detalhes['tipo']
-                        #                 condicao = detalhes['condicao']
-
-                        #                 # Verificar contagem apenas se o tipo corresponder (real ou previsão)
-                        #                 if tipo == 'real':
-                        #                     valor_real = valores_atuais.get(subparametro, "N/A")
-                        #                     valor_previsto = previsoes.get(subparametro, "N/A")
-                        #                     print('tipo', tipo, 'condicao', condicao, 'contagem_acima', contagem_acima, 'subparametro', subparametro)
-
-                        #                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
-                        #                         break
-                        #                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
-                        #                         break
-
-                        #                 elif tipo == 'previsao':
-                        #                     valor_previsto = previsoes.get(subparametro, "N/A")
-                        #                     print('tipo', tipo, 'condicao', condicao)
-
-                        #                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
-                        #                         break
-                        #                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
-                        #                         break
-
-
-
-                        #             if todos_parametros_ok:
-                        #                 # Transformando as listas de valores em strings sem colchetes
-                        #                 valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
-                        #                 valores_previstos_formatados = ', '.join(map(str, previsoes.get(chave_principal, ['N/A'])))
-                        #                 valores_reais_subparametro = ', '.join(map(str, valores_atuais.get(subparametro, ['N/A'])))
-                        #                 valores_previstos_subparametro = ', '.join(map(str, previsoes.get(subparametro, ['N/A'])))
-
-                        #                 mensagem = (
-                        #                     f"🟡 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
-                        #                     f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}">Ir para o equipamento</a>\n\n'
-                        #                     f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
-                        #                     f"Previsão para {chave_principal} acima do limite.\n"
-                        #                     f"Valores reais: {valores_reais_formatados}\n"
-                        #                     f"Valores previstos: {valores_previstos_formatados}\n\n"
-                        #                     f"Parâmetros fora do padrão: {', '.join(condicoes_acima)}\n"
-                        #                     f"Valores reais: {valores_reais_subparametro}\n"
-                        #                     f"Valores previstos: {valores_previstos_subparametro}\n"
-                        #                 )
-                        #             #    print(mensagem)
-                        #                 print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_acima}')
-                        #                 await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
-
-
-                        #         # Verificar 'abaixo do limite'
-                        #         if contagem_abaixo.get(chave_principal, 0) == 1:
-                        #             condicoes_abaixo = condicoes.get('abaixo', {})
-                        #             print(f"Condições 'abaixo': {condicoes_abaixo}")
-                        #             todos_parametros_ok = True
-                        #             parametros_violados = []
-
-                        #             for subparametro, detalhes in condicoes_abaixo.items():
-                        #                 tipo = detalhes['tipo']
-                        #                 condicao = detalhes['condicao']
-
-                        #                 # Verificar contagem apenas se o tipo corresponder (real ou previsão)
-                        #                 if tipo == 'real':
-                        #                     valor_real = valores_atuais.get(subparametro, "N/A")
-                        #                     valor_previsto = previsoes.get(subparametro, "N/A")
-                        #                     print('tipo', tipo, 'condicao', condicao, 'contagem_abaixo', contagem_abaixo, 'subparametro', subparametro)
-
-                        #                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
-                        #                         break
-                        #                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
-                        #                         break
-
-                        #                 elif tipo == 'previsao':
-                        #                     valor_previsto = previsoes.get(subparametro, "N/A")
-                        #                     print('tipo', tipo, 'condicao', condicao)
-
-                        #                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
-                        #                         break
-                        #                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
-                        #                         todos_parametros_ok = False
-                        #                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                        #                         print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
-                        #                         break
-
-                        #             if todos_parametros_ok:
-                        #                 # Transformando as listas de valores em strings sem colchetes
-                        #                 valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
-                        #                 valores_previstos_formatados = ', '.join(map(str, previsoes.get(chave_principal, ['N/A'])))
-                        #                 valores_reais_subparametro = ', '.join(map(str, valores_atuais.get(subparametro, ['N/A'])))
-                        #                 valores_previstos_subparametro = ', '.join(map(str, previsoes.get(subparametro, ['N/A'])))
-
-                        #                 mensagem = (
-                        #                     f"🟡 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
-                        #                     f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}">Ir para o equipamento</a>\n\n'
-                        #                     f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
-                        #                     f"Previsão para {chave_principal} abaixo do limite.\n"
-                        #                     f"Valores reais: {valores_reais_formatados}\n"
-                        #                     f"Valores previstos: {valores_previstos_formatados}\n\n"
-                        #                     f"Parâmetros fora do padrão: {', '.join(condicoes_abaixo)}\n"
-                        #                     f"Valores reais: {valores_reais_subparametro}\n"
-                        #                     f"Valores previstos: {valores_previstos_subparametro}\n"
-                        #                 )
-                        #             #    print(mensagem)
-                        #                 print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_abaixo}')
-                        #                 await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
-
-                                        
-                                        
+                                                # Adicionar o equipamento à lista de alertados
+                                                equipamentos_alertados.append(cod_equipamento)
+                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
 
             except Exception as e:
                 print(f"Erro ao processar equipamento {cod_equipamento}: {str(e)}")
+                
         await asyncio.sleep(10)
 
 

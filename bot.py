@@ -2980,7 +2980,7 @@ def buscar_causa_solucao(alarmes_text):
                 break
     return resultado
 
-# Função para detectar padrões de sequência de alarmes
+# Função para detectar padrões de sequência de alarmes, ignorando alarmes com "MISSING ID"
 def detectar_sequencia(alarmes_text):
     sequencias = {}
     alarmes = re.split(r',\s*', alarmes_text)
@@ -2988,6 +2988,11 @@ def detectar_sequencia(alarmes_text):
     for alarme in alarmes:
         base_nome = ' '.join(alarme.split()[:-1])
         numero = alarme.split()[-1]
+        
+        # Ignora alarmes que contenham "MISSING ID"
+        if "MISSING ID" in base_nome:
+            continue
+        
         if numero.isdigit():
             numero = int(numero)
             if base_nome not in sequencias:
@@ -3001,6 +3006,7 @@ def detectar_sequencia(alarmes_text):
             sequencia_final.append((base_nome, numeros))
     
     return sequencia_final
+
 
 
 
@@ -3740,6 +3746,15 @@ async def verificar_alarmes(pool):
                                 if descricoes_alarmes:
                                     mensagem = f"{cod_equipamento} 🚨 Alarme: \n\n" + "\n\n".join(descricoes_alarmes) + "\n\nO equipamento está sem potência ativa"
                                     await bot.send_message(id_telegram, mensagem, parse_mode='HTML')
+
+                                    # Remover da lista 'sem_mensagem_silenciado' após enviar a mensagem
+                                    await cursor.execute("SELECT cod_usina FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
+                                    cod_usina_silenciada = (await cursor.fetchone())[0]
+
+                                    # Remover o par (cod_usina_silenciada, cod_usuario) de sem_mensagem_silenciado
+                                    sem_mensagem_silenciado.discard((cod_usina_silenciada, cod_usuario))
+                                    print(f"Removido (cod_usina_silenciada: {cod_usina_silenciada}, cod_usuario: {cod_usuario}) da lista sem_mensagem_silenciado.")
+
 
                             await asyncio.sleep(1)
                         
@@ -5880,7 +5895,7 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
             await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
             valores_atuais_3 = await cursor.fetchone()
 
-            if valores_atuais_3 is None or 0 in valores_atuais_3:
+            if valores_atuais_3 is None or all(v == 0 for v in valores_atuais_3):
                 await cursor.execute("""
                 UPDATE machine_learning.leituras_consecutivas
                 SET alerta = 0
@@ -7949,138 +7964,8 @@ async def enviar_previsao_valor_equipamento_menu(chat_id, cod_equipamento):
 
 
 
-'''
 async def close_db(pool):
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            for cod_equipamento in cod_equipamentos_close:
-                await cursor.execute("""
-                UPDATE machine_learning.leituras_consecutivas
-                SET alerta = 0
-                WHERE cod_equipamento = %s
-                """, (int(cod_equipamento),))
-                await conn.commit()
 
-                await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET receber_alarme = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
-                await conn.commit()
-            #    print('db close receber_alarme 0', cod_equipamento)
-
-                await cursor.execute("SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme FROM machine_learning.telegram_silenciar_bot")
-                results = await cursor.fetchall()
-                
-                for result in results:
-                    cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
-
-                    await cursor.execute("SELECT nome, cod_usina FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-                    equipamento_result = await cursor.fetchone()
-                    if equipamento_result is not None:
-                        nome, cod_usina_silenciada = equipamento_result
-                        
-                        if tempo_silenciado > 0:
-                            if receber_alarme == 1:
-                                await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET tempo_silenciado = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
-                                print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
-                            elif receber_alarme == 0:
-                                await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
-                                print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
-                        elif tempo_silenciado == 0:
-                            if receber_alarme == 0:
-                                await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
-                                print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
-
-                # await cursor.execute("""
-                #     DELETE FROM machine_learning.relatorio_quebras 
-                #     WHERE cod_equipamento = %s 
-                #     AND (data_cadastro_quebra IS NULL OR data_cadastro_previsto IS NULL)
-                # """, (cod_equipamento,))
-                # await conn.commit()
-                # print(f"Remoção da linha da tabela de relatório de quebras para o equipamento {cod_equipamento}.")
-
-            print('db close 0')
-
-
-    # Limpar as listas
-    alertas_enviados.clear()
-    alertas_enviados_previsao.clear()
-    sem_mensagem_silenciado.clear()
-
-    cnx.close()
-    await pool.wait_closed()
-
-    print('fechando conexao com o banco')
-
-    if pool is None:
-        print("A conexão com o banco de dados não foi estabelecida.")
-        return
-
-
-
-async def run_close_db():
-    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
-    if pool is not None:
-        await close_db(pool)
-        await pool.close()
-    else:
-        print("O pool de conexão não foi criado com sucesso. Não é possível fechar a conexão.")
-
-
-
-def close_db_on_exit():
-    asyncio.run(run_close_db())
-    print("conexão fechada.")
-
-
-atexit.register(close_db_on_exit)
-
-
-'''
-
-
-async def close_db(pool):
-    
-    # if pool is None:
-    #     print("A conexão com o banco de dados não foi estabelecida.")
-    #     return
-    
-    # print('fechando o banco e limpando listas')
-    # async with pool.acquire() as conn:
-    #     async with conn.cursor() as cursor:
-    #         for cod_equipamento in cod_equipamentos_close:
-    #             await cursor.execute("""
-    #             UPDATE machine_learning.leituras_consecutivas
-    #             SET alerta = 0
-    #             WHERE cod_equipamento = %s
-    #             """, (int(cod_equipamento),))
-    #             await conn.commit()
-
-    #             await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET receber_alarme = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
-    #             await conn.commit()
-    #         #    print('db close receber_alarme 0', cod_equipamento)
-
-    #             await cursor.execute("SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme FROM machine_learning.telegram_silenciar_bot")
-    #             results = await cursor.fetchall()
-                
-    #             for result in results:
-    #                 cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
-
-    #                 await cursor.execute("SELECT nome, cod_usina FROM sup_geral.equipamentos WHERE codigo = %s", (cod_equipamento,))
-    #                 equipamento_result = await cursor.fetchone()
-    #                 if equipamento_result is not None:
-    #                     nome, cod_usina_silenciada = equipamento_result
-                        
-    #                     if tempo_silenciado > 0:
-    #                         if receber_alarme == 1:
-    #                             await cursor.execute("UPDATE machine_learning.telegram_silenciar_bot SET tempo_silenciado = 0 WHERE cod_equipamento = %s", (cod_equipamento,))
-    #                             print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
-    #                         elif receber_alarme == 0:
-    #                             await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
-    #                             print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
-    #                     elif tempo_silenciado == 0:
-    #                         if receber_alarme == 0:
-    #                             await cursor.execute("DELETE FROM machine_learning.telegram_silenciar_bot WHERE cod_equipamento = %s", (cod_equipamento,))
-    #                             print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
-
-    #         print('db close 0')
     if pool is None:
         print("A conexão com o banco de dados não foi estabelecida.")
         return
@@ -8252,6 +8137,1166 @@ async def notificar_todos_os_usuarios(pool):
     await enviar_mensagem_para_grupo(pool)
     
 
+
+
+
+
+
+############################################### nova parte ########################################################################################################
+
+'''
+'''
+
+async def novo_verificar_e_obter_coeficiente_novo(cod_equipamento, pool):
+    try:
+        coeficientes = {}
+        interceptos = {}
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                query = """
+                    SELECT X, Y, coeficiente, intercepto 
+                    FROM machine_learning.novos_coeficiente_geradores 
+                    WHERE cod_equipamento = %s
+                """
+                await cursor.execute(query, (cod_equipamento,))
+                resultados = await cursor.fetchall()
+                
+                if resultados:
+                    for resultado in resultados:
+                        X, Y, coeficiente, intercepto = resultado
+                        coeficientes[(X, Y)] = coeficiente
+                        interceptos[(X, Y)] = intercepto
+
+        return coeficientes, interceptos
+    except Exception as e:
+        print(f"An error occurred in verificar_e_obter_coeficiente: {e}")
+        return {}, {}
+
+
+def limpar_motor(marca, motor):
+    """
+    Limpa e padroniza o nome do motor e marca para combiná-lo com a tabela de parâmetros.
+    Exemplo: Volvo Penta VOLVO TAD 1344GE -> Volvo TAD 13
+    """
+    # Ajuste condicional para a marca
+    if "Volvo Penta" in marca:
+        marca_limpa = "Volvo"  # Sempre padronizar como "Volvo"
+    else:
+        marca_limpa = marca.strip().upper()  # Mantém a marca em maiúsculas para os outros casos
+
+    # Limpar o nome do motor de espaços em branco extras, hifens e colocar em maiúsculas
+    motor_limpo = motor.strip().upper()
+
+    # Remover duplicações de marca no motor (ex: Volvo Penta VOLVO TAD 1344 -> TAD 1344)
+    motor_limpo = motor_limpo.replace(marca_limpa.upper(), "").strip()
+
+    # Remover hífen ou outros caracteres especiais entre a marca e o motor
+    motor_limpo = re.sub(r'[-]', ' ', motor_limpo).strip()
+
+    # Remover caracteres extras após os primeiros dois dígitos principais do código do motor (ex: TAD1344GE -> TAD13)
+    motor_limpo = re.sub(r'(\d{2})\d*[A-Za-z]*$', r'\1', motor_limpo)
+
+    # Adicionar espaço entre letras e números (TAD13 -> TAD 13)
+    motor_limpo = re.sub(r'([A-Za-z]+)(\d+)', r'\1 \2', motor_limpo)
+
+    # Remover caracteres especiais e espaços em branco extras
+    motor_limpo = re.sub(r'\s+', ' ', motor_limpo).strip()
+
+    # Corrigir padrões específicos para Scania
+    if 'SCANIA' in marca_limpa.upper():
+        # Padrão SCANIA 13 → SCANIA DC 13
+        if re.match(r'^13$', motor_limpo):
+            motor_limpo = 'DC 13'
+        # Padrão SCANIA SACANIA DC 1253 A → SCANIA DC 12
+        elif re.match(r'^SACANIA DC 1253 A$', motor_limpo) or re.match(r'^DC 1253 A$', motor_limpo):
+            motor_limpo = 'DC 12'
+        # Padrão SCANIA DC 13072 A → SCANIA DC 13
+        elif re.match(r'^DC 13\d{2}', motor_limpo):
+            motor_limpo = 'DC 13'
+        # Padrão SCANIA DC 13 07 → SCANIA DC 13
+        elif re.match(r'^DC 13 \d{2}', motor_limpo):
+            motor_limpo = 'DC 13'
+    
+    # Corrigir padrões específicos para Volvo
+    if 'VOLVO' in marca_limpa.upper():
+        # Padrão Volvo TAD 1345GEB-B → Volvo TAD 13
+        if re.match(r'^TAD 13', motor_limpo):
+            motor_limpo = 'TAD 13'
+        # Padrão Volvo TAD 1641 GE-8 → Volvo TAD 16
+        elif re.match(r'^TAD 16', motor_limpo):
+            motor_limpo = 'TAD 16'
+
+    # Combinar a marca e o motor de maneira padronizada
+    motor_padronizado = f"{marca_limpa} {motor_limpo}".strip()
+    print('motor_padronizado:', motor_padronizado)
+
+    return motor_padronizado
+
+# Lista para armazenar os dados dos equipamentos
+equipamentos_ativos = []
+
+async def carregar_equipamentos_ativos(pool, equipamentos_ativos):
+    """
+    Função para carregar os equipamentos ativos do banco de dados e armazenar na lista `equipamentos_ativos`.
+    """
+    try:
+        # Realiza a consulta para buscar os equipamentos ativos
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    SELECT 
+                        e.codigo AS codigo_equipamento, 
+                        e.cod_usina, 
+                        u.nome AS nome_usina,  -- Adicionando a coluna nome da tabela usinas
+                        e.nome AS nome_equipamento,  -- Adicionando a coluna nome da tabela equipamentos
+                        e.motor, 
+                        COALESCE(
+                            CASE 
+                                WHEN e.motor = 'N/I' THEN '' -- Caso o motor seja "N/I", não preenchermos a marca
+                                WHEN e.motor LIKE '%TAD%' THEN 'Volvo'  -- Aqui já padronizamos como "Volvo"
+                                WHEN e.motor LIKE '%TWD%' THEN 'Volvo'  -- Aqui também padronizamos como "Volvo"
+                                WHEN e.motor LIKE '%DC%' THEN 'Scania'
+                                WHEN e.motor LIKE '%NEF%' THEN 'FPT'
+                                WHEN e.motor LIKE '%MWM%' THEN 'MWM'
+                                WHEN e.motor LIKE '%PERKINS%' THEN 'Perkins'
+                                ELSE li.descricao  -- Utiliza a descrição da lista, se disponível
+                            END, 
+                            '' -- Se não houver correspondência, deixamos em branco
+                        ) AS marca,
+                        e.potencia,  -- Adicionando a coluna potencia da tabela equipamentos
+                        e.tensao     -- Adicionando a coluna tensao da tabela equipamentos
+                    FROM 
+                        sup_geral.equipamentos e
+                    JOIN 
+                        sup_geral.usinas u ON e.cod_usina = u.codigo
+                    LEFT JOIN 
+                        sup_geral.leituras lei ON e.codigo = lei.cod_equipamento 
+                        AND lei.cod_campo = 397
+                    LEFT JOIN 
+                        sup_geral.lista_motores li ON lei.valor = li.valor
+                    WHERE 
+                        u.ativo = 1
+                        AND e.motor IS NOT NULL
+                        AND e.ativo = 1
+                    GROUP BY 
+                        e.codigo, e.cod_usina, u.nome, e.nome, e.motor, li.descricao, e.potencia, e.tensao;
+                """)
+                
+                # Armazenar o resultado da consulta na lista `equipamentos_ativos`
+                equipamentos_ativos.clear()
+
+                resultados = await cursor.fetchall()
+
+                for equipamento in resultados:
+                    # Agora estamos desempacotando 8 valores, incluindo nome_equipamento
+                    codigo_equipamento, cod_usina, nome_usina, nome_equipamento, motor, marca, potencia, tensao = equipamento
+                    # Limpar e padronizar o nome do motor e da marca
+                    motor_padronizado = limpar_motor(marca, motor)
+                    # Armazenar os dados limpos na lista
+                    equipamentos_ativos.append((codigo_equipamento, cod_usina, nome_usina, nome_equipamento, motor_padronizado, marca, potencia, tensao))
+                
+                print("Equipamentos ativos carregados com sucesso!")
+    
+    except Exception as e:
+        print(f"Erro ao carregar equipamentos: {e}")
+
+
+
+
+
+def formatar_valores(df):
+    """
+    Formata todas as colunas numéricas no DataFrame para mostrar apenas duas casas decimais.
+    """
+    num_cols = df.select_dtypes(include=['float64']).columns
+    df[num_cols] = df[num_cols].round(2)
+    return df
+
+# Dicionário global para armazenar os parâmetros min e max dos motores
+parametros_min_max_motores = {}
+
+async def carregar_parametros_min_max(pool):
+    # Buscar dados da tabela parametros_min_max_motores e armazenar em um dicionário
+    global parametros_min_max_motores
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+#            await cursor.execute("SELECT motor, parametro, min_valor, max_valor FROM machine_learning.parametros_min_max_motores")
+            await cursor.execute("SELECT motor, parametro, min_alerta, max_alerta FROM machine_learning.parametros_min_max_motores")
+            resultados = await cursor.fetchall() 
+    
+    # Armazenar os resultados em um dicionário estruturado
+    for linha in resultados:
+        motor, parametro, min_valor, max_valor = linha
+        if motor not in parametros_min_max_motores:
+            parametros_min_max_motores[motor] = {}
+        parametros_min_max_motores[motor][parametro] = {'min': min_valor, 'max': max_valor}
+    
+#    print(f"Parâmetros min/max carregados para {len(parametros_min_max_motores)} motores.")
+
+async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, tensao_l1_l2, tensao_l2_l3, tensao_l3_l1, pool):
+#async def verificar_alertas(cod_equipamento, df, marca, motor, potencia, tensao, pool):
+    # Se a tabela de parâmetros ainda não foi carregada, carregar agora
+    if not parametros_min_max_motores:
+        await carregar_parametros_min_max(pool)  # Adicione 'await' aqui
+
+    # Limpar o nome do motor para comparação (remover espaços e caracteres especiais)
+    motor_limpo = re.sub(r'\s+', '', motor.lower())  # Remove espaços e coloca em minúsculas
+    marca_limpa = marca.lower()
+
+    # Variáveis para guardar parâmetros encontrados
+    parametros_motor = None
+
+    # Função para verificar se uma substring existe em uma string de forma flexível
+    def comparar_nomes_motor(motor_tabela, motor_busca):
+        motor_tabela_limpo = re.sub(r'\s+', '', motor_tabela.lower())
+        return motor_busca in motor_tabela_limpo or motor_tabela_limpo in motor_busca
+
+    # Procurar parâmetros baseados na marca e parte do motor (usando substrings mais flexíveis)
+    for chave_motor in parametros_min_max_motores.keys():
+        chave_motor_limpa = re.sub(r'\s+', '', chave_motor.lower())  # Limpa a chave do motor da tabela
+
+        # Verifica se a marca e parte do motor estão presentes de forma flexível
+        if (marca_limpa in chave_motor_limpa) and comparar_nomes_motor(chave_motor, motor_limpo):
+            parametros_motor = parametros_min_max_motores[chave_motor]
+    #        print(f"Parâmetros encontrados para {chave_motor}\n")
+            break
+
+    limites = {}
+    # Se não encontrar os parâmetros, avisar
+    if not parametros_motor:
+    #    print(f"Parâmetros não encontrados para motor {motor} da marca {marca}\n")
+        return df, limites
+
+    # Normalizar as chaves para remover "(Bar)" ou outros elementos entre parênteses
+    parametros_motor_normalizado = {re.sub(r'\s*\(.*?\)\s*', '', chave): valor for chave, valor in parametros_motor.items()}
+
+    min_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('min', 5)
+    max_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('max', 80)
+
+    min_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('min', 20)
+    max_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('max', 100)
+
+    min_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('min', 0)
+    max_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('max', 6)
+
+    min_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('min', 20)
+    max_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)
+
+    min_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('min', 3.5)
+    max_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('max', 5.0)
+
+    min_rpm = parametros_motor_normalizado.get('RPM', {}).get('min', 1798)
+    max_rpm = parametros_motor_normalizado.get('RPM', {}).get('max', 1802)
+
+    min_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('min', 103)
+    max_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('max', 103)
+    alerta_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('alerta', 90)
+
+    # print('\nparâmetros do equipamento', cod_equipamento, 
+    #       '\nLoad Speed', min_load_speed, '-->', max_load_speed,
+    #       '\nPot. Ativa', min_potencia_ativa, '-->', max_potencia_ativa,
+    #       '\nPressao do oleo', min_pressao_oleo, '-->', max_pressao_oleo,
+    #       '\nRPM', min_rpm, '-->', max_rpm,
+    #       '\nTemp. agua', max_temp_agua, '-->', min_temp_agua,
+    #       '\nTemp ar de admissao', min_temp_ar_admissao, '-->', max_temp_ar_admissao,
+    #       '\nPressao de admissao', min_pressao_admissao, '-->', max_pressao_admissao)
+
+    
+    # Obtenha os limites de cada parâmetro
+    limites = {
+        'Load Speed': {'min': parametros_motor_normalizado.get('Load Speed', {}).get('min', 0),
+                       'max': parametros_motor_normalizado.get('Load Speed', {}).get('max', 80)},
+        'Temperatura do ar de admissão': {'min': parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('min', 0),
+                                          'max': parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('max', 100)},
+        'Pressão de admissão': {'min': parametros_motor_normalizado.get('Pressão de admissão', {}).get('min', 0),
+                                'max': parametros_motor_normalizado.get('Pressão de admissão', {}).get('max', 6)},
+        'Potência Ativa': {'min': parametros_motor_normalizado.get('Potência Ativa', {}).get('min', 0),
+        #               'max': potencia * 1.1 if potencia else parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)}, 
+                       'max': potencia * 0.9 if potencia else parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)}, 
+        'Pressão do Óleo': {'min': parametros_motor_normalizado.get('Pressão do Óleo', {}).get('min', 3.5),
+                            'max': parametros_motor_normalizado.get('Pressão do Óleo', {}).get('max', 5.0)},
+        'RPM': {'min': parametros_motor_normalizado.get('RPM', {}).get('min', 1798),
+                'max': parametros_motor_normalizado.get('RPM', {}).get('max', 1802)},
+        'Temperatura da Água': {'min': parametros_motor_normalizado.get('Temperatura da água', {}).get('min', 30),
+                                'max': parametros_motor_normalizado.get('Temperatura da água', {}).get('max', 103)},
+        'Tensao Bateria': {'min': parametros_motor_normalizado.get('Bateria', {}).get('min', 10),
+                'max': parametros_motor_normalizado.get('Bateria', {}).get('max', 29.50)},
+        
+        'Frequencia': {'min': parametros_motor_normalizado.get('Frequencia', {}).get('min', 59.5),
+                'max': parametros_motor_normalizado.get('Frequencia', {}).get('max', 60.5)},
+        
+        'Consumo': {'min': parametros_motor_normalizado.get('Consumo', {}).get('min', 10),
+                'max': parametros_motor_normalizado.get('Consumo', {}).get('max', 29.50)},
+        
+        
+        'Tensao L1-L2': {
+            'min': tensao_l1_l2 * 0.9,
+            'max': tensao_l1_l2 * 1.1
+        },
+        'Tensao L2-L3': {
+            'min': tensao_l2_l3 * 0.9,
+            'max': tensao_l2_l3 * 1.1
+        },
+        'Tensao L3-L1': {
+            'min': tensao_l3_l1 * 0.9,
+            'max': tensao_l3_l1 * 1.1
+        }
+        # 'Tensao L1-L2': {'min': tensao * 0.9 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('min', 380 * 0.9),
+        #                 'max': tensao * 1.1 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('max', 380 * 1.1)},
+        # 'Tensao L2-L3': {'min': tensao * 0.9 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('min', 380 * 0.9),
+        #                 'max': tensao * 1.1 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('max', 380 * 1.1)},
+        # 'Tensao L3-L1': {'min': tensao * 0.9 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('min', 380 * 0.9),
+        #                 'max': tensao * 1.1 if tensao else parametros_motor_normalizado.get('Tensao', {}).get('max', 380 * 1.1)}
+
+    }
+
+    # Adiciona a coluna Alerta com valor padrão 0
+    df['Alerta'] = 0
+
+    return df, limites
+
+
+
+
+
+# Função para verificar alerta seguindo a lista de parâmetros
+def verificar_alerta_seguindo_lista(row, lista_parametros):
+    for parametro, dependentes in lista_parametros.items():
+    #    print(f"Verificando parametro: {parametro} com valor: {row[f'{parametro}']}")
+        if row[f'{parametro}'] == 1:
+            for dependente in dependentes:
+    #            print(f"Verificando dependente: {dependente} com valor: {row[dependente]}")
+                if row[dependente] == 1:
+                    print("Alerta acionado!")
+                    return 1  # Alerta final
+    return 0
+
+
+# Definindo os parâmetros de prioridade para verificação de alertas
+lista_parametros = {
+    'Real_Load_Speed': [
+        'Alerta_Temperatura_Agua_real',
+        'Alerta_Potencia_Ativa_real',
+    ],
+    'Real_Pressao_do_Oleo': [
+        'Alerta_RPM_real',
+    ],
+    'Real_Temperatura_Agua': [
+        'Alerta_Load_Speed_real',
+        'Alerta_Temperatura_Ar_Admissao_real',
+    ]
+}
+
+# Dicionário para especificar variáveis que entram nos limites mais e menos
+limites_variaveis = {
+    'limite_mais': [
+        'Load Speed', 'Potência Ativa', 'Temperatura do ar de admissão',
+        'Temperatura da água', 'RPM', 'Pressão de admissão', 
+        'Tensao L1-L2', 'Tensao L2-L3', 'Tensao L3-L1'
+    ],
+    'limite_menos': [
+        'Pressão do Óleo', 'RPM',
+        'Tensao L1-L2', 'Tensao L2-L3', 'Tensao L3-L1'
+    ]
+}
+
+
+# Dicionário de limites de tolerância (desvio permitido para cada variável)
+limites_tolerancia = {
+    'Load Speed': 10,
+    'Pressão do Óleo': 1,
+    'Potência Ativa': 50,
+    'Temperatura do ar de admissão': 10,
+    'Temperatura da Água': 15,
+    'RPM': 50,
+    'Tensao Bateria': 5,
+    'Pressão de admissão': 0.5,
+    'Tensao L1-L2': 10,
+    'Tensao L2-L3': 10,
+    'Tensao L3-L1': 10
+}
+
+async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool, equipamentos_ativos):
+    sensores = {
+        3: 'Potência Ativa', 
+        6: 'Tensao L1-L2',
+        7: 'Tensao L2-L3',
+        8: 'Tensao L3-L1',
+        16: 'Frequencia',
+        19: 'Tensao Bateria',
+        20: 'RPM',
+        21: 'Pressão do Óleo',
+        23: 'Consumo',
+        24: 'Horimetro',
+        25: 'Temperatura da Água',
+        76: 'Temperatura do ar de admissão',
+        77: 'Pressão de admissão',
+        114: 'Load Speed'
+    }
+    contagem_limites = 4
+    contagem_acima_do_limite = {}
+    contagem_abaixo_do_limite = {}
+    contagem_acima_do_limite_previsao = {}
+    contagem_abaixo_do_limite_previsao = {}
+    previsoes = {}
+    valores_atuais = {}
+    cod_usina = {}
+    nome_usina = {}
+    nome_equipamento = {}
+
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+
+                # Obter valores atuais para cada sensor
+                valores_atuais = {}
+                async with conn.cursor() as cursor_valores:
+                    for cod_campo, sensor_nome in sensores.items():
+                        await cursor_valores.execute(
+                            "SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = %s",
+                            (cod_equipamento, cod_campo)
+                        )
+                        valores = await cursor_valores.fetchone()
+                        if valores:
+                            valores_atuais[sensor_nome] = [float(val) for val in valores]
+
+                # Carregar a lista de equipamentos ativos (caso ainda não tenha sido carregada)
+                if not equipamentos_ativos:
+                    await carregar_equipamentos_ativos(pool, equipamentos_ativos)
+                                
+
+                # Verificar se o valor do cod_campo 114 (Load Speed) é 0
+                if 'Load Speed' in valores_atuais and any(val == 0 for val in valores_atuais['Load Speed']):
+                #    print(f"Equipamento {cod_equipamento} pulado devido a Load Speed ser 0")
+                    return None, None, None, None, None, False, False, False, False
+                
+                # Verificar se algum dos valores está vazio ou nulo
+                if any(v is None for v in valores_atuais.values()):
+                    print(f"Erro: Valores nulos detectados nos sensores do equipamento {cod_equipamento}")
+                    return None, None, None, None, None, False, False, False, False
+
+                # Verificar a data de cadastro para cod_campo = 3
+                await cursor.execute(
+                    "SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3",
+                    (cod_equipamento,)
+                )
+                data_cadastro = await cursor.fetchone()
+
+                if data_cadastro is not None:
+                    data_cadastro = data_cadastro[0]
+
+                agora = datetime.now()
+
+                if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
+                #     await cursor.execute("""
+                #         UPDATE machine_learning.leituras_consecutivas
+                #         SET alerta = 0
+                #         WHERE cod_equipamento = %s
+                #     """, (cod_equipamento,))
+                #     await conn.commit()
+                    return {}, {}, {}, {}, {}, {}, {}, {}, {}
+
+                # Verificar se a diferença é maior que 15 minutos
+                if (agora - data_cadastro) > timedelta(minutes=15):
+                #    print(f"Equipamento {cod_equipamento}: Ignorado, data_cadastro é mais de 10 minutos atrás.")
+                    return {}, {}, {}, {}, {}, {}, {}, {}, {}
+    
+                print('\n----------------------------------------------------------------------------------------------------------------\n')
+
+                # Procurar o equipamento na lista de equipamentos ativos
+                equipamento_info = next((equipamento for equipamento in equipamentos_ativos if equipamento[0] == cod_equipamento), None)
+
+                if equipamento_info:
+                    cod_usina, nome_usina, nome_equipamento, motor, marca, potencia, tensao = equipamento_info[1], equipamento_info[2], equipamento_info[3], equipamento_info[4], equipamento_info[5], equipamento_info[6], equipamento_info[7]
+                    print(f"Equipamento {cod_equipamento} ({nome_equipamento}) pertence à usina {nome_usina} (código: {cod_usina}) com motor {motor} da marca {marca}, de potencia {potencia} e tensao {tensao}")
+                else:
+    #                print(f"Equipamento {cod_equipamento} não encontrado na lista de equipamentos ativos.")
+                    return None, None, None, None, None, False, False, False, False
+
+
+
+                # Obter coeficientes e interceptos
+                coeficientes, interceptos = await novo_verificar_e_obter_coeficiente_novo(cod_equipamento, pool)
+
+                if not coeficientes or not interceptos:
+                    return {}, {}, {}, {}, {}, {}, {}, {}, {}
+
+                # Calcular previsões para cada sensor que possui coeficiente
+                for (X, Y), coeficiente in coeficientes.items():
+                    sensor_X = sensores.get(X)
+                    sensor_Y = sensores.get(Y)
+                    if sensor_X and sensor_Y and sensor_X in valores_atuais and sensor_Y in valores_atuais:
+                        previsoes[sensor_Y] = [
+                            round(val * coeficiente + interceptos[(X, Y)], 1) 
+                            for val in valores_atuais[sensor_X]
+                        ]
+
+
+
+                # Criar o DataFrame para os valores atuais com o último valor de cada sensor
+                df_atuais = pd.DataFrame({
+                    'Pressão do Óleo': [valores_atuais['Pressão do Óleo'][-1]],
+                    'Load Speed': [valores_atuais['Load Speed'][-1]],
+                    'Potência Ativa': [valores_atuais['Potência Ativa'][-1]],
+                    'Temperatura do ar de admissão': [valores_atuais['Temperatura do ar de admissão'][-1]],
+                    'Temperatura da água': [valores_atuais['Temperatura da Água'][-1]],
+                    'RPM': [valores_atuais['RPM'][-1]],
+                    'Pressão de admissão': [valores_atuais['Pressão de admissão'][-1]],
+                    'Tensao L1-L2': [valores_atuais['Tensao L1-L2'][-1]],
+                    'Tensao L2-L3': [valores_atuais['Tensao L2-L3'][-1]],
+                    'Tensao L3-L1': [valores_atuais['Tensao L3-L1'][-1]],
+                    'Tensao Bateria': [valores_atuais['Tensao Bateria'][-1]],
+                })
+
+                # Criar DataFrame com as previsões
+                df_previsoes = pd.DataFrame(previsoes, columns=[
+                    'Prev_Pressao_do_Oleo',
+                    'Prev_Load Speed',
+                    'Prev_Potencia_Ativa', 
+                    'Prev_Temperatura_do_ar_de_admissao',
+                    'Prev_Temperatura_Agua', 
+                    'Prev_RPM', 'Prev_Pressao_de_admissao',
+                ])
+
+                # Adicionar a coluna de "Pressão do Óleo" real (do df_atuais)
+                df_previsoes['Real_Pressao_do_Oleo'] = df_atuais['Pressão do Óleo']
+                df_previsoes['Real_Load_Speed'] = df_atuais['Load Speed']
+                df_previsoes['Real_RPM'] = df_atuais['RPM']
+                df_previsoes['Real_Potencia_Ativa'] = df_atuais['Potência Ativa']
+                df_previsoes['Real_Temperatura_do_ar_de_admissao'] = df_atuais['Temperatura do ar de admissão']
+                df_previsoes['Real_Temperatura_Agua'] = df_atuais['Temperatura da água']
+                df_previsoes['Real_Pressao_de_admissao'] = df_atuais['Pressão de admissão']
+                df_previsoes['Real_Tensao_Bateria'] = df_atuais['Tensao Bateria']
+
+                # Aplicar a função para definir alerta final para cada linha do DataFrame
+                df_previsoes['Alerta_Final'] = df_previsoes.apply(lambda row: verificar_alerta_seguindo_lista(row, lista_parametros), axis=1)
+
+                # Formatar valores numéricos para duas casas decimais
+                df_previsoes = formatar_valores(df_previsoes)
+
+                # Aplicar as regras de negócio (verificar alertas)
+                df_previsoes, limites = await verificar_alertas(cod_equipamento, df_previsoes, marca, motor, potencia, tensao,
+                                                                                                       valores_atuais['Tensao L1-L2'][-1],
+                                                                                                        valores_atuais['Tensao L2-L3'][-1],
+                                                                                                        valores_atuais['Tensao L3-L1'][-1],
+                                                                                                        pool)
+                
+                # Verificar limites para cada sensor
+                for cod_campo, sensor_nome in sensores.items():
+                    if sensor_nome in valores_atuais:
+                        valores_sensor = valores_atuais[sensor_nome]
+                        
+                        # Obter limites do dicionário de limites retornado pela função verificar_alertas
+                        limite_menos = limites.get(sensor_nome, {}).get('min', -float('inf'))
+                        limite_mais = limites.get(sensor_nome, {}).get('max', float('inf'))
+
+                    #    print(f'{sensor_nome}: limite_menos', limite_menos,'limite_mais',limite_mais)
+
+                        contagem_acima_do_limite[sensor_nome] = 0
+                        contagem_abaixo_do_limite[sensor_nome] = 0
+
+                        for i, valor in enumerate(valores_sensor):
+                            if valor == 0:
+                                continue
+
+                            # Verifica se o sensor faz parte das variáveis para "limite mais"
+                            if sensor_nome in limites_variaveis['limite_mais'] and valor > limite_mais:
+                                contagem_acima_do_limite[sensor_nome] += 1
+
+                            # Verifica se o sensor faz parte das variáveis para "limite menos"
+                            if sensor_nome in limites_variaveis['limite_menos'] and valor < limite_menos:
+                                contagem_abaixo_do_limite[sensor_nome] += 1
+
+                            # if valor < limite_menos:
+                            #     contagem_abaixo_do_limite[sensor_nome] += 1
+                            # elif valor > limite_mais:
+                            #     contagem_acima_do_limite[sensor_nome] += 1
+
+                #        print(f"{sensor_nome}: Abaixo do limite: {contagem_abaixo_do_limite[sensor_nome]}, Acima do limite: {contagem_acima_do_limite[sensor_nome]}\n")
+
+
+
+
+                # Verificar limites para os valores previstos, comparando com os valores reais
+                for sensor_nome, valores_previsao in previsoes.items():
+                    contagem_acima_do_limite_previsao[sensor_nome] = 0
+                    contagem_abaixo_do_limite_previsao[sensor_nome] = 0
+
+                    # Verificar se o sensor possui um limite de tolerância definido no dicionário
+                    if sensor_nome in limites_tolerancia and sensor_nome in valores_atuais:
+                        limite_tolerancia = limites_tolerancia[sensor_nome]
+                        valores_atuais_sensor = valores_atuais[sensor_nome]  # Os valores reais
+
+                        for valor_previsao, valor_atual in zip(valores_previsao, valores_atuais_sensor):
+                            # Definir os limites com base no valor previsto
+                            limite_mais_previsao = valor_previsao + limite_tolerancia
+                            limite_menos_previsao = valor_previsao - limite_tolerancia
+
+                            # Verificar se o valor atual excede esses limites
+                            if valor_atual > limite_mais_previsao:
+                                contagem_acima_do_limite_previsao[sensor_nome] += 1
+                            if valor_atual < limite_menos_previsao:
+                                contagem_abaixo_do_limite_previsao[sensor_nome] += 1
+                    else:
+                        print(f"Limite de tolerância ou valores atuais não definidos para o sensor: {sensor_nome}")
+
+
+                    # Ajuste os contadores para 0 ou 1
+                    contagem_acima_do_limite_previsao[sensor_nome] = 1 if contagem_acima_do_limite_previsao[sensor_nome] > contagem_limites else 0
+                    contagem_abaixo_do_limite_previsao[sensor_nome] = 1 if contagem_abaixo_do_limite_previsao[sensor_nome] > contagem_limites else 0
+                    contagem_acima_do_limite[sensor_nome] = 1 if contagem_acima_do_limite.get(sensor_nome, 0) > contagem_limites else 0
+                    contagem_abaixo_do_limite[sensor_nome] = 1 if contagem_abaixo_do_limite.get(sensor_nome, 0) > contagem_limites else 0
+
+                # Printar os valores e previsões
+
+                for sensor in ['Load Speed', 'Potência Ativa', 'RPM', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão', 'Tensao Bateria', 'Frequencia', 'Consumo', 'Horimetro']:
+                    if sensor in valores_atuais:
+                        print(f'\n{sensor} Atual:', valores_atuais[sensor])
+                        print(f'Contagem Acima do Limite Real ({sensor}):', contagem_acima_do_limite.get(sensor, 0))
+                        print(f'Contagem Abaixo do Limite Real ({sensor}):', contagem_abaixo_do_limite.get(sensor, 0))
+                    if sensor in previsoes:
+                        print(f'{sensor} Previsto:', previsoes[sensor])
+                        print(f'Contagem Acima do Limite Previsão ({sensor}):', contagem_acima_do_limite_previsao.get(sensor, 0))
+                        print(f'Contagem Abaixo do Limite Previsão ({sensor}):', contagem_abaixo_do_limite_previsao.get(sensor, 0))
+
+
+                # Retornar valores reais e previstos junto com as contagens
+                return (
+                    nome_equipamento,
+                    nome_usina,
+                    cod_usina,
+                    valores_atuais,                   # Valores reais
+                    previsoes,                        # Valores previstos
+                    contagem_abaixo_do_limite,        # Contagem de valores abaixo do limite real
+                    contagem_acima_do_limite,         # Contagem de valores acima do limite real
+                    contagem_abaixo_do_limite_previsao, # Contagem de valores abaixo do limite previsto
+                    contagem_acima_do_limite_previsao  # Contagem de valores acima do limite previsto
+                )
+
+
+    except Exception as e:
+        print(f"An error occurred in fazer_previsao_sempre_alerta: {e}")
+        return {}, {}, {}, {}, {}, {}, {}, {}, {}
+
+
+
+lista_parametros_previsao = {
+    'Load Speed': {
+        'previsao': {
+            'acima': {
+                'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
+            },
+            'abaixo': {
+                'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
+            }
+        },
+        'real': {
+            'acima': {
+                'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
+            },
+            'abaixo': {
+                'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        }
+    },
+    'Pressão do Óleo': {
+        'previsao': {
+            'acima': {
+                'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
+                'Temperatura da Água': {'tipo': 'previsao', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Load Speed': {'tipo': 'real', 'condicao': 'acima'},
+                'Temperatura da Água': {'tipo': 'previsao', 'condicao': 'abaixo'}
+            }
+        },
+        'real': {
+            'acima': {
+                'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
+                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
+                'Temperatura da Água': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        }
+    },
+    'Temperatura da Água': {
+        'previsao': {
+            'acima': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        },
+        'real': {
+            'acima': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        }
+    },
+    'Temperatura do ar de admissão': {
+        'previsao': {
+            'acima': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'RPM': {'tipo': 'previsao', 'condicao': 'abaixo'}
+            }
+        },
+        'real': {
+            'acima': {
+                'RPM': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        }
+    },
+    'Consumo': {
+        'real': {
+            'acima': {
+                'Load Speed': {'tipo': 'real', 'condicao': 'acima'}
+            },
+            'abaixo': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}
+            }
+        }
+    }
+}
+
+
+
+
+async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados, pool, equipamentos_ativos):
+    equipamentos_alertados = []  # Lista para armazenar equipamentos que já foram alertados
+
+    while True:
+        for cod_equipamento in cod_equipamentos:
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (cod_equipamento,))
+                        valores_atuais_114 = await cursor.fetchone()
+
+                        if valores_atuais_114 is None:
+                            continue
+
+
+                        # Verifica se todos os valores são 0
+                        if all(valor == 0 for valor in valores_atuais_114):
+                            if cod_equipamento in equipamentos_alertados:
+                                # Remove o equipamento da lista se já foi alertado e todos os valores são 0
+                                equipamentos_alertados.remove(cod_equipamento)
+                                print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
+                            continue
+
+
+                        if cod_equipamento in equipamentos_alertados:
+                    #        print(f"Equipamento {cod_equipamento} já foi alertado anteriormente. Pulando...")
+                            continue
+
+                        # Função para fazer previsões e obter as contagens
+                        nome_equipamento, nome_usina, cod_usina, valores_atuais, previsoes, contagem_abaixo_do_limite, contagem_acima_do_limite, contagem_abaixo_do_limite_previsao, contagem_acima_do_limite_previsao = await novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool, equipamentos_ativos)
+
+                        if previsoes is None or contagem_abaixo_do_limite is None or contagem_acima_do_limite is None:
+                            continue
+
+                        # Obtém o id_telegram do cod_usuario=374
+                        await cursor.execute("SELECT id_telegram FROM usuarios_telegram WHERE cod_usuario = %s", (374,))
+                        id_telegram_result = await cursor.fetchone()
+
+                        if id_telegram_result is None:
+                            print("Nenhum id_telegram encontrado para o cod_usuario = 374.")
+                            return
+
+                        id_usuario = id_telegram_result[0]
+
+                        # Verificar as condições com base no dicionário lista_parametros_previsao
+                        for chave_principal, condicoes in lista_parametros_previsao.items():
+                            if chave_principal in previsoes:
+                                print(f'\nChave principal: {chave_principal}')
+
+                                # Verificar previsões e valores reais
+                                for tipo_condicao in ['previsao', 'real']:
+                                    if tipo_condicao in condicoes:
+                                        tipo_chave_principal = tipo_condicao  # Definir se é previsao ou real
+                                        print(f"Tipo de Condição: {tipo_chave_principal}")
+
+                                        # Escolher as variáveis de contagem com base no tipo da chave principal
+                                        if tipo_chave_principal == 'real':
+                                            contagem_acima = contagem_acima_do_limite
+                                            contagem_abaixo = contagem_abaixo_do_limite
+                                        elif tipo_chave_principal == 'previsao':
+                                            contagem_acima = contagem_acima_do_limite_previsao
+                                            contagem_abaixo = contagem_abaixo_do_limite_previsao
+
+                                        # Verificar 'acima do limite'
+                                        if contagem_acima.get(chave_principal, 0) == 1:
+                                            condicoes_acima = condicoes[tipo_chave_principal].get('acima', {})
+                                            print(f"Condições 'acima': {condicoes_acima}")
+                                            todos_parametros_ok = True
+                                            parametros_violados = []
+
+                                            for subparametro, detalhes in condicoes_acima.items():
+                                                tipo = detalhes['tipo']
+                                                condicao = detalhes['condicao']
+
+                                                # Verificar contagem com base no tipo
+                                                if tipo == 'real':
+                                                    valor_real = valores_atuais.get(subparametro, "N/A")
+                                                    valor_previsto = previsoes.get(subparametro, "N/A")
+
+                                                    if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
+                                                        break
+                                                    elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
+                                                        break
+
+                                                elif tipo == 'previsao':
+                                                    valor_previsto = previsoes.get(subparametro, "N/A")
+
+                                                    if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
+                                                        break
+                                                    elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
+                                                        break
+
+                                            if todos_parametros_ok:
+                                                # Transformando as listas de valores em strings sem colchetes
+                                                valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
+                                                valores_previstos_formatados = ', '.join(map(str, previsoes.get(chave_principal, ['N/A'])))
+                                                valores_reais_subparametro = ', '.join(map(str, valores_atuais.get(subparametro, ['N/A'])))
+                                                valores_previstos_subparametro = ', '.join(map(str, previsoes.get(subparametro, ['N/A'])))
+
+                                                mensagem = (
+                                                    f"🟡 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
+                                                    f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}">Ir para o equipamento</a>\n\n'
+                                                    f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
+                                                    f"Previsão para {chave_principal} acima do limite.\n"
+                                                    f"Valores reais: {valores_reais_formatados}\n"
+                                                    f"Valores previstos: {valores_previstos_formatados}\n\n"
+                                                    f"Parâmetros fora do padrão: {', '.join(condicoes_acima)}\n"
+                                                    f"Valores reais: {valores_reais_subparametro}\n"
+                                                    f"Valores previstos: {valores_previstos_subparametro}\n"
+                                                )
+                                                print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_acima}')
+                                                await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
+
+                                                # Adicionar o equipamento à lista de alertados
+                                                equipamentos_alertados.append(cod_equipamento)
+                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
+
+                                        # Verificar 'abaixo do limite'
+                                        if contagem_abaixo.get(chave_principal, 0) == 1:
+                                            condicoes_abaixo = condicoes[tipo_chave_principal].get('abaixo', {})
+                                            print(f"Condições 'abaixo': {condicoes_abaixo}")
+                                            todos_parametros_ok = True
+                                            parametros_violados = []
+
+                                            for subparametro, detalhes in condicoes_abaixo.items():
+                                                tipo = detalhes['tipo']
+                                                condicao = detalhes['condicao']
+
+                                                # Verificar contagem com base no tipo
+                                                if tipo == 'real':
+                                                    valor_real = valores_atuais.get(subparametro, "N/A")
+                                                    valor_previsto = previsoes.get(subparametro, "N/A")
+
+                                                    if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está.")
+                                                        break
+                                                    elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está.")
+                                                        break
+
+                                                elif tipo == 'previsao':
+                                                    valor_previsto = previsoes.get(subparametro, "N/A")
+
+                                                    if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está.")
+                                                        break
+                                                    elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
+                                                        todos_parametros_ok = False
+                                                        parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está.")
+                                                        break
+
+                                            if todos_parametros_ok:
+                                                # Transformando as listas de valores em strings sem colchetes
+                                                valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
+                                                valores_previstos_formatados = ', '.join(map(str, previsoes.get(chave_principal, ['N/A'])))
+                                                valores_reais_subparametro = ', '.join(map(str, valores_atuais.get(subparametro, ['N/A'])))
+                                                valores_previstos_subparametro = ', '.join(map(str, previsoes.get(subparametro, ['N/A'])))
+
+                                                mensagem = (
+                                                    f"🟡 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
+                                                    f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}">Ir para o equipamento</a>\n\n'
+                                                    f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
+                                                    f"Previsão para {chave_principal} abaixo do limite.\n"
+                                                    f"Valores reais: {valores_reais_formatados}\n"
+                                                    f"Valores previstos: {valores_previstos_formatados}\n\n"
+                                                    f"Parâmetros fora do padrão: {', '.join(condicoes_abaixo)}\n"
+                                                    f"Valores reais: {valores_reais_subparametro}\n"
+                                                    f"Valores previstos: {valores_previstos_subparametro}\n"
+                                                )
+                                                print(f'enviando mensagem para a chave {chave_principal} e o parametro {condicoes_abaixo}')
+                                                await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
+
+                                                # Adicionar o equipamento à lista de alertados
+                                                equipamentos_alertados.append(cod_equipamento)
+                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
+
+            except Exception as e:
+                print(f"Erro ao processar equipamento {cod_equipamento}: {str(e)}")
+                
+        await asyncio.sleep(100)
+
+'''
+'''
+############################################### fim nova parte ########################################################################################################
+
+
+############################################### inicio atualizar tabelas de quebras ########################################################################################################
+
+# Lista de alarmes a ser verificada
+alarmes_relevantes = {1, 243, 244, 253, 256, 259, 262, 265, 269, 272, 273, 279, 280, 281, 301, 304, 350, 351, 352, 
+                      353, 356, 357, 381, 383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405, 411, 412, 
+                      413, 414, 415, 416, 471, 472, 473, 528, 590, 591, 592, 593, 594, 595, 596, 597, 598, 599, 
+                      600, 602, 603, 604, 611, 615, 616, 617, 631, 635, 637, 638, 657, 658, 669, 678, 725, 727, 
+                      728, 729, 730, 731, 732, 735}
+
+
+
+
+async def check_and_update(pool):
+    while True:
+        print('Entrando no loop de verificação')
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Selecionar linhas onde valores_reais = '0.0, 0.0, 0.0, 0.0, 0.0'
+                await cursor.execute("""
+                    SELECT id, cod_equipamento, valores_reais, alarmes, data_cadastro 
+                    FROM machine_learning.valores_previsao 
+                    WHERE valores_reais = '0.0, 0.0, 0.0, 0.0, 0.0'
+                """)
+                rows = await cursor.fetchall()
+
+                for row in rows:
+                    id_linha, cod_equipamento, valores_reais, alarmes, data_cadastro = row
+
+                    # Limpar e converter alarmes para uma lista de inteiros
+                    alarmes_list = []
+                    if alarmes:
+                        alarmes = alarmes.strip().split(',')
+                        alarmes_list = [int(alarme.strip(" ()")) for alarme in alarmes if alarme.strip(" ()").isdigit()]
+
+                    # Verificar se algum alarme está na lista de alarmes relevantes
+                    if any(alarme in alarmes_relevantes for alarme in alarmes_list):
+                        # Consultar o último data_cadastro_quebra para o mesmo cod_equipamento
+                        await cursor.execute("""
+                            SELECT data_cadastro_quebra 
+                            FROM machine_learning.valores_previsao 
+                            WHERE cod_equipamento = %s 
+                            AND data_cadastro_quebra IS NOT NULL
+                            ORDER BY data_cadastro_quebra DESC
+                            LIMIT 1
+                        """, (cod_equipamento,))
+                        last_data_cadastro_quebra = await cursor.fetchone()
+
+                        # Se existir um data_cadastro_quebra e estiver dentro de 5 minutos, pular a atualização
+                        if last_data_cadastro_quebra:
+                            last_data_cadastro_quebra = last_data_cadastro_quebra[0]
+                            if data_cadastro - last_data_cadastro_quebra <= timedelta(minutes=5):
+                #                print(f'Skipping update for ID {id_linha} as the last update was within 5 minutes.')
+                                continue
+
+                        # Atualizar a coluna data_cadastro_quebra com o valor de data_cadastro
+                        await cursor.execute("""
+                            UPDATE machine_learning.valores_previsao 
+                            SET data_cadastro_quebra = %s 
+                            WHERE id = %s
+                        """, (data_cadastro, id_linha))
+                #        print(f'Atualizado data_cadastro_quebra para ID {id_linha} com data {data_cadastro}')
+
+                        # Confirmar todas as atualizações de uma só vez
+                        await conn.commit()
+                        print('fim da atualizacao')
+        await asyncio.sleep(11000)
+
+
+async def check_and_update_falhas(pool):
+    while True:
+        print("Iniciando verificação de falhas")
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Seleciona as linhas onde data_cadastro_quebra não é nulo
+                await cursor.execute("""
+                    SELECT id, cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao 
+                    FROM machine_learning.valores_previsao 
+                    WHERE data_cadastro_quebra IS NOT NULL
+                """)
+                rows = await cursor.fetchall()
+
+                # Dicionário para controlar os últimos registros por equipamento e alerta com timestamp
+                last_insert_time = {}
+
+                for row in rows:
+                    id, cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = row
+                    skip_entry = False
+
+                    # Verificar se o equipamento e o alerta já foram inseridos dentro de 2 minutos antes e depois
+                    if cod_equipamento in last_insert_time:
+                        for alert, timestamp in last_insert_time[cod_equipamento].items():
+                            time_diff = abs((data_cadastro_quebra - timestamp).total_seconds())
+                            if time_diff <= 120:  # 2 minutos antes e depois
+                                if (alert == 'alerta_80' and alerta_80) or \
+                                   (alert == 'alerta_100' and alerta_100) or \
+                                   (alert == 'previsao' and previsao):
+                                    skip_entry = True
+                    #                print(f"Pulando entrada para equipamento {cod_equipamento} devido a alerta {alert} já registrado dentro de 2 minutos com data {data_cadastro_quebra}.")
+                                    break
+                            if time_diff > 120:  # 2 minutos antes e depois
+                                if (alert == 'alerta_80' and alerta_80) or \
+                                   (alert == 'alerta_100' and alerta_100) or \
+                                   (alert == 'previsao' and previsao):
+                                    skip_entry = True
+                    #                print(f"Pulando entrada para equipamento {cod_equipamento} devido a alerta {alert} já registrado antes de 2 minutos com data {data_cadastro_quebra}.")
+                                    break
+                    if skip_entry:
+                        continue
+
+                    # Atualizar last_insert_time para o equipamento e alerta
+                    if cod_equipamento not in last_insert_time:
+                        last_insert_time[cod_equipamento] = {}
+                    
+                    # Inserir os dados na tabela falhas_gerais
+                    inserted = False
+
+                    if alerta_80 and 'alerta_80' not in last_insert_time[cod_equipamento]:
+                        await cursor.execute("""
+                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80)
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80))
+                #        print(f'Inserido alerta_80 para equipamento {cod_equipamento} na falhas_gerais com data {data_cadastro_quebra}.')
+                        last_insert_time[cod_equipamento]['alerta_80'] = data_cadastro_quebra
+                        inserted = True
+
+                    if alerta_100 and 'alerta_100' not in last_insert_time[cod_equipamento]:
+                        await cursor.execute("""
+                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_100)
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_100))
+                #        print(f'Inserido alerta_100 para equipamento {cod_equipamento} na falhas_gerais com data {data_cadastro_quebra}.')
+                        last_insert_time[cod_equipamento]['alerta_100'] = data_cadastro_quebra
+                        inserted = True
+
+                    if previsao and 'previsao' not in last_insert_time[cod_equipamento]:
+                        await cursor.execute("""
+                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, previsao)
+                            VALUES (%s, %s, %s, %s, %s)
+                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, previsao)) 
+                #        print(f'Inserido previsao para equipamento {cod_equipamento} na falhas_gerais com data {data_cadastro_quebra}.')
+                        last_insert_time[cod_equipamento]['previsao'] = data_cadastro_quebra
+                        inserted = True
+
+                    # Se nenhum valor foi inserido, insira uma linha com 0 em todos
+                    if not inserted:
+                        await cursor.execute("""
+                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, 0, 0, 0))
+                #        print(f'Inserido valores 0 para equipamento {cod_equipamento} na falhas_gerais com data {data_cadastro_quebra}.')
+ 
+                    # Confirma as atualizações na tabela falhas_gerais
+                    await conn.commit()
+
+                print('escrito em falhas')
+        # Esperar por 10 segundos antes de verificar novamente
+        await asyncio.sleep(1000)
+
+async def adicionar_DataQuebra_FG(pool):  # Funçao para passar data_cadastro_quebra/valores_previsão para data_cadastro/falhas_gerais
+    tamanho_lote = 1000000
+    valor_offset = 0
+    
+    while True:
+        print('Iniciando data_cadastro_quebra para tabela falhas gerais formatada como data_cadastro')
+        
+        async with pool.acquire() as conn:   # vp = tabela valores_previsao e fg = falhas_gerais 
+            async with conn.cursor() as cursor:
+                # Preparar a consulta SQL para selecionar linhas
+                await cursor.execute("""
+                    SELECT 
+                        vp.cod_equipamento, 
+                        vp.cod_usina, 
+                        vp.data_cadastro_quebra, 
+                        vp.alerta_80,
+                        vp.alerta_100, 
+                        vp.previsao
+                    FROM 
+                        machine_learning.valores_previsao vp
+                    WHERE 
+                        NOT EXISTS (
+                            SELECT 1 
+                            FROM machine_learning.falhas_gerais fg
+                            WHERE fg.cod_equipamento = vp.cod_equipamento 
+                              AND fg.cod_usina = vp.cod_usina
+                              AND fg.data_cadastro = vp.data_cadastro_quebra 
+                        )
+                        AND vp.data_cadastro_quebra IS NOT NULL
+                        
+                    LIMIT %s OFFSET %s
+                """, (tamanho_lote, valor_offset))
+
+                linhas = await cursor.fetchall()
+
+
+                # Inserir as linhas selecionadas na tabela falhas_gerais
+                for linha in linhas:
+                    cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = linha
+
+                    await cursor.execute("""
+                        INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80, alerta_100, previsao))
+
+                #    print('Inserido registro para falha em equipamento {data_cadastro_quebra} na tabela falhas_gerais.')
+
+                
+                # Confirmar a transação
+                await conn.commit()
+                print('Transação de dados pelas planilhas valores_previsto e falhas_gerais feitas com sucesso')
+                # Atualizar o offset para o próximo lote
+                valor_offset += tamanho_lote
+                
+
+############################################### fim atualizar tabelas de quebras ########################################################################################################
+
+
+
+
+
 async def listar_tarefas_ativas():
     tasks = asyncio.all_tasks()
     for task in tasks:
@@ -8286,8 +9331,9 @@ async def processos_async_menos_pesados(dp: Dispatcher):
     try:
         tabelas = 'sup_geral.leituras'
         cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
-        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '114', '21','76','25','20','77']
-#        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '114', '21','76','25','20','77']
+        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77']
+
+#        cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '114', '21','76','25','20','77']
 
         # Processos leves em paralelo, não interferem no fluxo principal
         tarefas = [
@@ -8300,7 +9346,14 @@ async def processos_async_menos_pesados(dp: Dispatcher):
 
             processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados_processar_equipamentos, dp.pool),
             enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool),
-            enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+            enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool),
+
+            novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool, equipamentos_ativos),
+
+            check_and_update(dp.pool),
+            check_and_update_falhas(dp.pool),
+            adicionar_DataQuebra_FG(dp.pool),
+
         ]
         await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
     except asyncio.CancelledError:
@@ -8350,21 +9403,7 @@ async def tratar_botoes(dp):
     # Escuta os botões
     await dp.start_polling()
     
-    
 
-
-# async def shutdown(signal, loop):
-#     print(f"Recebido sinal de encerramento: {signal}. Cancelando tarefas...")
-    
-#     # Cancelar todas as tarefas pendentes
-#     tasks = [t for t in asyncio.all_tasks() if not t.done()]
-#     for task in tasks:
-#         task_name = task.get_name()
-#         print(f"Cancelando tarefa {task_name}")
-#         task.cancel()
-    
-#     await asyncio.gather(*tasks, return_exceptions=True)
-#     loop.stop()
 
 async def on_shutdown(dp: Dispatcher):
     await close_db(dp.pool)
@@ -8381,94 +9420,3 @@ if __name__ == "__main__":
     # Iniciar o polling com os callbacks on_startup e on_shutdown
     executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
     
-
-# Finalização das tasks
-# async def on_shutdown(dp: Dispatcher):
-#     dp.pool.close()
-#     await dp.pool.wait_closed()
-
-# if __name__ == "__main__":
-#     from aiogram import executor
-#     from bot import dp  # Supondo que 'dp' seja seu Dispatcher
-    
-#     # Iniciar o polling com os callbacks on_startup e on_shutdown
-#     executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
-
-
-
-
-'''
-
-
-async def on_startup(dp):
-    # Iniciar o pool de conexões
-    dp.pool = dp.pool  # Reutilizando o pool criado durante a inicialização
-
-    tabelas = 'sup_geral.leituras'
-    cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
-
-    await criar_tabela_usuarios_telegram(dp.pool)
-    await criar_tabela_relatorio_quebras(dp.pool)
-    await criar_tabela_log_relatorio_quebras(dp.pool)
-    await criar_tabela_silenciar_bot(dp.pool)
-    await criar_tabela_leituras(dp.pool)
-    await criar_tabela_valores_previsao(dp.pool)
-    await criar_tabela_falhas_gerais(dp.pool)
-    await criar_tabela_usinas_usuario(dp.pool)
-
-    # Enviar notificação a todos os usuários
-#    await notificar_todos_os_usuarios(dp.pool)
-    
-    # Iniciar polling do bot de forma assíncrona
-    polling_task = asyncio.create_task(dp.start_polling())
-
-    # Definir outras tarefas assíncronas
-    task_processar_equipamentos = asyncio.create_task(processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool))
-    task_processar_equipamentos_alerta = asyncio.create_task(enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool))
-    task_processar_equipamentos_alerta_80_mais = asyncio.create_task(enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool))
-
-    # Outras tarefas (descomente e adicione conforme necessário)
-    task_monitorar_leituras_consecutivas = asyncio.create_task(monitorar_leituras_consecutivas(dp.pool))
-    task_verificar_alarmes = asyncio.create_task(verificar_alarmes(dp.pool))
-    task_verificar_e_excluir_linhas_expiradas = asyncio.create_task(verificar_e_excluir_linhas_expiradas(dp.pool))
-#    task_monitorar_quebras = asyncio.create_task(monitorar_quebras(dp.pool))
-
-    task_monitor_log_file = asyncio.create_task(monitor_log_file())
-
-    task_clean_temp_files = asyncio.create_task(clean_temp_files())
-    task_atualizar_usinas_usuario = asyncio.create_task(atualizar_usinas_usuario(dp.pool))
-
-    # Aguardar a conclusão do polling antes de prosseguir
-    await polling_task
-
-    # Aguardar a conclusão de outras tarefas
-    await asyncio.gather(
-        task_processar_equipamentos,
-        task_processar_equipamentos_alerta,
-        task_processar_equipamentos_alerta_80_mais,
-        task_monitorar_leituras_consecutivas,
-        task_verificar_alarmes,
-        task_verificar_e_excluir_linhas_expiradas,
-        task_monitor_log_file,
-        task_clean_temp_files,
-        task_atualizar_usinas_usuario,
-#        task_monitorar_quebras
-    )
-
-async def on_shutdown(dp):
-    dp.pool.close()
-    await dp.pool.wait_closed()
-
-# Handlers e outras funções do bot
-
-if __name__ == '__main__':
-    try:
-        asyncio.run(on_startup(dp))
-        executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
-    except KeyboardInterrupt:
-        print("Interrompido pelo usuário")
-
-
-
-
-'''

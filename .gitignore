@@ -5,3 +5,5 @@ venv/
 .streamlit/
 
 _pycache_
+
+requirements.txt
