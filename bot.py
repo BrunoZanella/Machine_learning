@@ -3554,8 +3554,7 @@ async def verificar_alarmes(pool):
 
 
 
-
-codigos_alarmes_desejados = [1, 243, 244, 253, 256, 259, 262,265,269,272,273,279,280,281,301,304,350, 351, 352, 353, 356, 357, 381, 383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405,411,412,413,414,415,416, 471, 472, 473,528, 590, 591, 592, 593, 594,595,596,597,598,599,600, 602, 603, 604, 611,615,616,617,631, 635, 637, 638, 657, 658,669,678, 725, 727, 728, 729, 730, 731, 732, 735]
+codigos_alarmes_desejados = [1, 240, 243, 244, 253, 256, 258, 259, 262, 265, 269, 272, 273, 279, 280, 281, 301, 304, 333, 350, 351, 352, 353, 356, 357, 381, 383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405,411,412,413,414,415,416, 471, 472, 473,528, 590, 591, 592, 593, 594,595,596,597,598,599,600, 602, 603, 604, 611,615,616,617,631, 635, 637, 638, 657, 658,669,678, 725, 727, 728, 729, 730, 731, 732, 735]
 
 
 
@@ -5487,8 +5486,10 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 
 async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     while True:
-#        tempo_inicial = datetime.now()
-#        print('inicio do processamento dos equipamentos',tempo_inicial)
+
+        tempo_inicial = datetime.now()
+        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+        print('\n','------------------------------------------------------------------------------ inicio processar_equipamentos -------------------------------------------------------------------------------------------', data_cadastro_formatada,'\n')
 
         try:
             async with pool.acquire() as conn:
@@ -5518,9 +5519,22 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
         except Exception as e:
             print(f"Erro ao processar os equipamentos: {str(e)}")
 
-#        tempo_final = datetime.now()
-#        print('\ntempo total de processamento dos equipamentos e campos', tempo_final - tempo_inicial)
+        tempo_final = datetime.now()
+        data_cadastro_formatada_final = tempo_final.strftime('%d-%m-%Y %H:%M')
 
+        # Calcular o tempo de execução
+        tempo_execucao = tempo_final - tempo_inicial
+
+        # Formatando a diferença de tempo
+        segundos = tempo_execucao.total_seconds()
+        horas = int(segundos // 3600)
+        minutos = int((segundos % 3600) // 60)
+        segundos_restantes = int(segundos % 60)
+
+        # Exibindo o tempo total de execução
+        print('\n','------------------------------------------------------------------------------ fim processar_equipamentos -------------------------------------------------------------------------------------------', data_cadastro_formatada_final)
+        print(f'Tempo de execução do processar_equipamentos: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
+        
         await asyncio.sleep(10)
 
 async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_especificados):
@@ -5766,6 +5780,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                         if agora - data_cadastro_consecutivas > timedelta(hours=1):
                             continue
 
+                #        print('equipamento',cod_equipamento,'na previsao')
 
                         coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(int(cod_equipamento), pool)
                         previsoes, alerta_abaixo, alerta_acima = await fazer_previsao_sempre_alerta(valores_atuais, coeficiente_existente, intercepto_existente, int(cod_equipamento), pool)
@@ -6226,7 +6241,9 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                         # Ignora leituras muito antigas
                         if agora - data_cadastro_consecutivas > timedelta(hours=1):
                             continue
-
+                        
+                #        print('equipamento',cod_equipamento,'no alerta 80%')
+                
                         ###############  inicio do verificar a necessidade de nao entrar se for 0 potencia ativa   ##############################################################################
 
                         # # Obter o valor de cod_campo 3
@@ -8031,7 +8048,7 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool, equipame
                 # Carregar a lista de equipamentos ativos (caso ainda não tenha sido carregada)
                 if not equipamentos_ativos:
                     await carregar_equipamentos_ativos(pool, equipamentos_ativos)
-                                
+
 
                 # Verificar se o valor do cod_campo 114 (Load Speed) é 0
                 if 'Load Speed' in valores_atuais and any(val == 0 for val in valores_atuais['Load Speed']):
@@ -8451,42 +8468,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                 async with pool.acquire() as conn:
                     async with conn.cursor() as cursor:
 
-                        # await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (cod_equipamento,))
-                        # valores_atuais_114 = await cursor.fetchone()
-
-                        # if valores_atuais_114 is None:
-                        #     continue
-
-                        # Busca os valores da tabela leituras_consecutivas para o cod_campo 114
-                        await cursor.execute(
-                            "SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 114",
-                            (int(cod_equipamento),)
-                        )
-                        result = await cursor.fetchone()
-
-                        if result is None:
-                            continue
-
-                        valores_atuais_114 = result[:-1]  # Os cinco valores
-                        data_cadastro_consecutivas = result[-1]
+                        await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (cod_equipamento,))
+                        valores_atuais_114 = await cursor.fetchone()
 
                         if valores_atuais_114 is None:
                             continue
-                        
-                        # Verifica se os dados são novos comparados à última leitura
-                        await cursor.execute(
-                            "SELECT data_cadastro FROM sup_geral.leituras WHERE cod_equipamento = %s ORDER BY data_cadastro DESC LIMIT 1",
-                            (int(cod_equipamento),)
-                        )
-                        result = await cursor.fetchone()
-                        if result is not None:
-                            data_cadastro_leituras = result[0]
-                        else:
-                            continue
 
-                        if data_cadastro_leituras <= data_cadastro_consecutivas:
-                            continue
-                        
                         # Verifica se todos os valores são 0
                         # if all(valor == 0 for valor in valores_atuais_114):
                         #     if cod_equipamento in equipamentos_alertados:
@@ -8926,7 +8913,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
         print('\n','---------------------------------------------------------------------- fim novo_enviar_previsao_valor_equipamento_alerta_novo ----------------------------------------------------------------------', data_cadastro_formatada_final)
         print(f'Tempo de execução do novo_enviar_previsao_valor_equipamento_alerta_novo: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
-        await asyncio.sleep(200)
+        await asyncio.sleep(120)
 
 
 
@@ -8986,7 +8973,8 @@ async def adicionar_DataQuebra_FG(pool):  # Funçao para passar data_cadastro_qu
                                     '(615,)', '(616,)', '(617,)', '(631,)', '(635,)', 
                                     '(637,)', '(638,)', '(657,)', '(658,)', '(669,)', 
                                     '(678,)', '(725,)', '(727,)', '(728,)', '(729,)', 
-                                    '(730,)', '(731,)', '(732,)', '(735,)')
+                                    '(730,)', '(731,)', '(732,)', '(735,)', '(240,)', 
+                                    '(258,)', '(333,)')
                             )                       
                         LIMIT %s OFFSET %s
                     """, (tamanho_lote, valor_offset))
@@ -9026,6 +9014,8 @@ async def listar_tarefas_ativas():
     for task in tasks:
         print(f"Tarefa: {task.get_name()} - Estado: {task._state}")
 
+
+
 # Inicializando o bot
 async def on_startup(dp: Dispatcher):
     dp.pool = await create_pool()  # Reutilizando o pool criado durante a inicialização
@@ -9046,6 +9036,289 @@ async def on_startup(dp: Dispatcher):
     
         # Inicia os processos assíncronos sem travar o fluxo principal
     #    asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
+        asyncio.create_task(processos_async_pesados(dp), name="processos_pesados")
+    except Exception as e:
+        print(f"Erro ao iniciar tarefas: {e}")
+
+# Função para processos menos pesados
+async def processos_async_menos_pesados(dp: Dispatcher):
+    try:
+        # Processos leves em paralelo, não interferem no fluxo principal
+        tarefas = [
+        #    monitorar_leituras_consecutivas(dp.pool),
+            verificar_alarmes(dp.pool),
+            verificar_e_excluir_linhas_expiradas(dp.pool),
+            clean_temp_files(),
+            atualizar_usinas_usuario(dp.pool),
+            adicionar_DataQuebra_FG(dp.pool),
+        #    monitor_log_file(),
+        
+        ]
+        await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
+    except asyncio.CancelledError:
+        print("Tarefa de processos leves cancelada.")
+    except Exception as e:
+        print(f"Erro durante a execução dos processos leves: {e}")
+
+
+import json
+import subprocess
+from pathlib import Path
+import asyncio
+
+
+async def carregar_ou_recriar_parametros():
+    # Defina o caminho do arquivo
+    temp_file = Path("/tmp/parametros.json")
+
+    # Verifique se o arquivo existe
+    if not temp_file.exists():
+        # Recrie o arquivo com dados padrão ou carregue os parâmetros necessários
+        parametros_iniciais = {
+            "cod_equipamentos": await obter_equipamentos_validos("sup_geral.leituras", dp.pool),
+            "tabelas": "sup_geral.leituras",
+            "cod_campo_especificados": ['3', '6', '7', '8', '9', '10', '11', '16', '19', '23', '24', '114', '21', '76', '25', '20', '77', '120'],
+            "equipamentos_ativos": []
+        }
+
+        # Salva os parâmetros no arquivo JSON
+        with temp_file.open("w") as f:
+            json.dump(parametros_iniciais, f)
+        print("Arquivo `parametros.json` recriado.")
+    else:
+        print("Arquivo `parametros.json` já existe e será carregado.")
+
+    # Carrega os parâmetros do arquivo JSON
+    with temp_file.open("r") as f:
+        parametros = json.load(f)
+
+    return parametros
+
+async def run_assincrono():
+    # Chama a função para carregar ou recriar o arquivo de parâmetros
+    parametros = await carregar_ou_recriar_parametros()
+
+    # Inicializa o pool e executa a função desejada
+    pool = await create_pool()
+    await novo_enviar_previsao_valor_equipamento_alerta_novo(
+        parametros["cod_equipamentos"],
+        parametros["tabelas"],
+        parametros["cod_campo_especificados"],
+        pool,
+        parametros["equipamentos_ativos"]
+    )
+
+# Função para processos pesados
+async def processos_async_pesados(dp: Dispatcher):
+    tabelas = 'sup_geral.leituras'
+    cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
+    cod_campo_especificados_processar_equipamentos = ['3', '6', '7', '8', '9', '10', '11', '16', '19', '23', '24', '114', '21', '76', '25', '20', '77', '120']
+    equipamentos_ativos = []  # Defina ou obtenha `equipamentos_ativos` como necessário para o seu contexto
+
+    # Salva todas as variáveis necessárias em um arquivo JSON temporário
+    temp_file = Path("/tmp/parametros.json")
+    with temp_file.open("w") as f:
+        json.dump({
+            "cod_equipamentos": cod_equipamentos,
+            "tabelas": tabelas,
+            "cod_campo_especificados": cod_campo_especificados_processar_equipamentos,
+            "cod_campo": cod_campo_especificados,
+            "equipamentos_ativos": equipamentos_ativos
+        }, f)
+
+    # Executa a função `novo_enviar_previsao_valor_equipamento_alerta_novo` no núcleo 7
+    subprocess.Popen(
+        ['taskset', '-c', '7', 'python3', '-c', '''
+import json
+import asyncio
+from bot import novo_enviar_previsao_valor_equipamento_alerta_novo
+from bot import create_pool
+
+async def run_assincrono():
+    with open("/tmp/parametros.json") as f:
+        parametros = json.load(f)
+    pool = await create_pool()
+    await novo_enviar_previsao_valor_equipamento_alerta_novo(
+        parametros["cod_equipamentos"],
+        parametros["tabelas"],
+        parametros["cod_campo_especificados"],
+        pool,
+        parametros["equipamentos_ativos"]
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_assincrono())
+        ''']
+    )
+
+    # Executa a função `enviar_alerta_80_100` no núcleo 6
+    subprocess.Popen(
+        ['taskset', '-c', '6', 'python3', '-c', '''
+import json
+import asyncio
+from bot import enviar_alerta_80_100
+from bot import create_pool
+
+async def run_assincrono():
+    with open("/tmp/parametros.json") as f:
+        parametros = json.load(f)
+    pool = await create_pool()
+    await enviar_alerta_80_100(
+        parametros["cod_equipamentos"],
+        parametros["tabelas"],
+        parametros["cod_campo"],
+        pool
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_assincrono())
+        ''']
+    )
+
+    # Executa a função `enviar_previsao_valor_equipamento_alerta` no núcleo 5
+    subprocess.Popen(
+        ['taskset', '-c', '5', 'python3', '-c', '''
+import json
+import asyncio
+from bot import enviar_previsao_valor_equipamento_alerta
+from bot import create_pool
+
+async def run_assincrono():
+    with open("/tmp/parametros.json") as f:
+        parametros = json.load(f)
+    pool = await create_pool()
+    await enviar_previsao_valor_equipamento_alerta(
+        parametros["cod_equipamentos"],
+        parametros["tabelas"],
+        parametros["cod_campo"],
+        pool
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_assincrono())
+        ''']
+    )
+
+    # Executa a função `processar_equipamentos` no núcleo 4
+    subprocess.Popen(
+        ['taskset', '-c', '4', 'python3', '-c', '''
+import json
+import asyncio
+from bot import processar_equipamentos
+from bot import create_pool
+
+async def run_assincrono():
+    with open("/tmp/parametros.json") as f:
+        parametros = json.load(f)
+    pool = await create_pool()
+    await processar_equipamentos(
+        parametros["cod_equipamentos"],
+        parametros["tabelas"],
+        parametros["cod_campo_especificados"],
+        pool
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_assincrono())
+        ''']
+    )
+
+    # Executa a função `monitorar_leituras_consecutivas` no núcleo 3
+    subprocess.Popen(
+        ['taskset', '-c', '4', 'python3', '-c', '''
+import json
+import asyncio
+from bot import monitorar_leituras_consecutivas
+from bot import create_pool
+
+async def run_assincrono():
+    with open("/tmp/parametros.json") as f:
+        parametros = json.load(f)
+    pool = await create_pool()
+    await monitorar_leituras_consecutivas(
+        pool
+    )
+
+if __name__ == "__main__":
+    asyncio.run(run_assincrono())
+        ''']
+    )
+    
+    try:
+        # Executa outros processos pesados em paralelo
+        tarefas = [
+            focar_alertas(cod_equipamentos, tabelas, cod_campo_especificados_processar_equipamentos, dp.pool),
+        ]
+        await asyncio.gather(*tarefas)
+    except asyncio.CancelledError:
+        print("Tarefa de processos pesados cancelada.")
+    except Exception as e:
+        print(f"Erro durante a execução dos processos pesados: {e}")
+
+
+
+# Criação de tabelas
+async def criar_tabelas(pool):
+    await criar_tabela_usuarios_telegram(pool)
+    await criar_tabela_relatorio_quebras(pool)
+    await criar_tabela_log_relatorio_quebras(pool)
+    await criar_tabela_silenciar_bot(pool)
+    await criar_tabela_leituras(pool)
+    await criar_tabela_valores_previsao(pool)
+    await criar_tabela_falhas_gerais(pool)
+    await criar_tabela_usinas_usuario(pool)
+ 
+
+async def on_shutdown(dp: Dispatcher):
+    await close_db(dp.pool)
+    print("Fechando o pool de conexões...")
+    if dp.pool is not None:
+        dp.pool.close()
+        await dp.pool.wait_closed()
+
+
+if __name__ == "__main__":
+    # Iniciar o polling com os callbacks on_startup e on_shutdown
+    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    
+
+
+
+# Função principal que lida com botões sem interromper as tarefas
+async def tratar_botoes(dp):
+    @dp.message_handler(lambda message: message.text == "/relatorio")
+    async def handle_button(message):
+        # Aqui processa o botão
+        await message.answer("Processando botão...")
+
+    # Escuta os botões
+    await dp.start_polling()
+    
+    
+    
+'''
+
+
+# Inicializando o bot
+async def on_startup(dp: Dispatcher):
+    dp.pool = await create_pool()  # Reutilizando o pool criado durante a inicialização
+#    await criar_tabelas(dp.pool)
+
+    try:
+        # Cancelar quaisquer tarefas remanescentes que não foram finalizadas
+        for task in asyncio.all_tasks():
+            if task.get_name() in ["processos_menos_pesados", "processos_pesados"]:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    print(f"Tarefa {task.get_name()} cancelada na inicialização.")
+    
+        # Iniciar processamento de botões prioritários
+        asyncio.create_task(processar_botoes_prioritarios())
+    
+        # Inicia os processos assíncronos sem travar o fluxo principal
+        asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
         asyncio.create_task(processos_async_pesados(dp), name="processos_pesados")
     except Exception as e:
         print(f"Erro ao iniciar tarefas: {e}")
@@ -9128,3 +9401,5 @@ async def tratar_botoes(dp):
 
     # Escuta os botões
     await dp.start_polling()
+
+'''
