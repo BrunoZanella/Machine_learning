@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoramento de Equipamentos</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    
+    .chart-container {
+      margin-top: 20px;
+      height: 300px;
+      position: relative;
+    }
+
+    canvas {
+      background-color: #f8f9fa;
+      box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+      border-radius: 10px;
+    }
+
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .progress-container {
+      flex: 1;
+      margin-right: 10px;
+    }
+
+    .progress-container:last-child {
+      margin-right: 0;
+    }
+
+    .progress {
+      position: relative;
+      background-color: #e0e0e0;
+      height: 20px;
+      border-radius: 10px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      border-radius: 10px;
+    }
+
+    .progress-value {
+      position: absolute;
+      color: white;
+    }
+
+    .card-title {
+      text-align: center; /* Centraliza o texto do título */
+  }
+  
+    .chart-container {
+      position: relative;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+
+
+    .progress {
+      height: 30px;
+      border-radius: 10px;
+      overflow: hidden;
+      background-image: linear-gradient(to right, rgba(255, 40, 41, 0.4) 0%, rgba(51, 172, 46, 0.4) 33%, rgba(37, 181, 181, 0.4) 66%);
+    }
+
+    .progress-bar {
+      font-weight: bold;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: width 1s ease-in-out;
+    }
+
+    .ruim {
+      background-color: rgba(255, 40, 41, 1);
+    }
+
+    .bom {
+      background-color: rgba(51, 172, 46, 1);
+    }
+
+    .otimo {
+      background-color: rgba(37, 181, 181, 1);
+    }
+
+
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .progress-row .progress {
+      flex: 1;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container mt-4">
+    <h2 class="text-center mb-4">Monitoramento de Equipamentos em Alerta</h2>
+    <div class="row" id="equipamentos-container"></div>
+  </div>
+
+  <script>
+    const campos = {
+      3: 'Potência Ativa',
+      16: 'Frequência',
+      19: 'Bateria',
+      20: 'RPM',
+      21: 'Press. Óleo',
+      25: 'Temperatura',
+      24: 'Operação',
+    };
+    
+    let isFirstLoad = true;
+    
+    async function carregarEquipamentos() {
+      try {
+        const response = await fetch('/equipamentos');
+        const { ultimo_valor, historico } = await response.json();
+    
+        const container = document.getElementById('equipamentos-container');
+        container.innerHTML = ''; // Limpar container
+    
+        const historicoPorEquipamento = agruparHistorico(historico);
+    
+        // Filtra e ordena os equipamentos
+        const equipamentosOrdenados = Object.values(historicoPorEquipamento).sort((a, b) => {
+          const valoresA = ultimo_valor.filter(valor => valor.cod_equipamento === a.cod_equipamento);
+          const valoresB = ultimo_valor.filter(valor => valor.cod_equipamento === b.cod_equipamento);
+    
+          // Checar se há valores fora do ideal e se a potência ativa é maior que 0
+          const foraIdealA = equipamentoForaIdeal(valoresA);
+          const foraIdealB = equipamentoForaIdeal(valoresB);
+    
+          // Equipamentos fora do ideal com potência > 0 ficam no topo
+          return foraIdealB - foraIdealA;
+        });
+
+        // Se não houver equipamentos em alerta
+        if (equipamentosOrdenados.length === 0 || !equipamentosOrdenados.some(e => equipamentoForaIdeal(ultimo_valor.filter(valor => valor.cod_equipamento === e.cod_equipamento)))) {
+          container.innerHTML = `
+            <div class="alert alert-info" style="text-align: center;">
+              Não há equipamentos em alerta.
+            </div>
+          `;
+          return; // Não renderiza mais nada
+        }
+
+        // Renderiza os cards na ordem desejada
+        equipamentosOrdenados.forEach((equipamento, index) => {
+          const { nome, cod_equipamento, cod_usina } = equipamento;
+    
+          const valoresEquipamento = ultimo_valor.filter(
+            valor => valor.cod_equipamento === cod_equipamento
+          );
+    
+          // Inserir o card HTML
+          container.insertAdjacentHTML('beforeend', `
+            <div class="col-md-4 mb-4">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h5 class="card-title" style="margin-bottom: 15px;">
+                    <a href="https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina=${cod_usina}&codEquip=${cod_equipamento}"
+                       target="_blank" rel="noopener noreferrer"
+                       style="text-decoration: none; color: inherit;" 
+                       title="Código Equipamento: ${cod_equipamento}, Código Usina: ${cod_usina}">
+                      ${nome}
+                    </a>
+                  </h5>
+                  ${renderizarProgressos(valoresEquipamento)}
+                  <div class="chart-container" style="height: 200px;">
+                    <canvas id="chart${index}"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `);
+    
+          setTimeout(() => criarGrafico(equipamento.historico, `chart${index}`), 0);
+        });
+    
+        isFirstLoad = false;
+      } catch (error) {
+        console.error('Erro ao carregar equipamentos:', error);
+      }
+    }
+    
+    // Função para verificar se o equipamento está fora do ideal e com potência > 0
+    function equipamentoForaIdeal(valores) {
+      let potenciaAtiva = 0;
+      let foraIdeal = false;
+    
+      valores.forEach(({ cod_campo, valor, ideal }) => {
+        const valorNumerico = parseFloat(valor) || 0;
+    
+        if (cod_campo === 3) {
+          potenciaAtiva = valorNumerico; // Potência ativa
+        }
+    
+        const idealMin = ideal && ideal[0] !== undefined ? ideal[0] : 0;
+        const idealMax = ideal && ideal[1] !== undefined ? ideal[1] : valorNumerico;
+    
+        if (valorNumerico < idealMin || valorNumerico > idealMax) {
+          foraIdeal = true; // Fora do intervalo ideal
+        }
+      });
+    
+      // Retorna 1 se fora do ideal e com potência > 0, senão 0
+      return foraIdeal && potenciaAtiva > 0 ? 1 : 0;
+    }
+    
+    
+    function agruparHistorico(historico) {
+      const agrupado = {};
+    
+      historico.forEach((item) => {
+        const { cod_equipamento, cod_campo, valor, data_cadastro, nome_equipamento, nome_usina, cod_usina } = item;
+    
+        const nome = `${nome_usina || 'Usina Desconhecida'} - ${nome_equipamento || 'Equipamento Desconhecido'}`;
+    
+        if (!agrupado[cod_equipamento]) {
+          agrupado[cod_equipamento] = {
+            nome,
+            cod_equipamento,
+            cod_usina,
+            historico: {},
+          };
+        }
+    
+        if (!agrupado[cod_equipamento].historico[cod_campo]) {
+          agrupado[cod_equipamento].historico[cod_campo] = [];
+        }
+    
+        agrupado[cod_equipamento].historico[cod_campo].push({ valor, data_cadastro });
+      });
+    
+      return agrupado;
+    }
+    
+    function renderizarProgressos(valores) {
+      const valoresUnicos = {}; // Armazena apenas o último valor único por campo
+    
+      // Armazena apenas um valor por campo
+      valores.forEach(({ cod_campo, valor, min, max, ideal }) => {
+        if (campos[cod_campo]) {
+          valoresUnicos[cod_campo] = { cod_campo, valor, min, max, ideal }; // Inclui min, max e ideal
+        }
+      });
+    
+      const progressoHtml = Object.values(valoresUnicos).map(({ cod_campo, valor, min, max, ideal }) => {
+        const nomeCampo = campos[cod_campo];
+        const valorNumerico = parseFloat(valor) || 0;
+    
+        // Definindo limites do ideal
+        const idealMin = ideal && ideal[0] !== undefined ? ideal[0] : 0;
+        const idealMax = ideal && ideal[1] !== undefined ? ideal[1] : valorNumerico;
+    
+        // Definindo valores padrão para min e max se não estiverem disponíveis
+        const minValue = min !== null && min !== undefined ? min : 0;
+        const maxValue = max !== null && max !== undefined ? max : valorNumerico;
+    
+        // Cálculo da porcentagem de progresso
+        const progressPercent = (maxValue > minValue) ?
+          ((valorNumerico - minValue) / (maxValue - minValue)) * 100 : 0;
+    
+        const progressBarWidth = Math.max(0, Math.min(progressPercent, 100));
+    
+        // Determinação da cor do progresso
+        const progressColor =
+          valorNumerico >= idealMin && valorNumerico <= idealMax
+            ? 'rgba(51, 172, 46, 1)' // Verde se dentro do intervalo ideal
+            : 'rgba(255, 40, 41, 1)'; // Vermelho se fora do intervalo ideal
+    
+        // Tooltip com min, max e ideal
+        const tooltip = `
+          Min: ${minValue}, Max: ${maxValue}, Ideal: ${idealMin} - ${idealMax}
+        `;
+    
+        return `
+          <div class="progress-container" style="margin-bottom: -5px;">
+            <h6 style="font-size: 15px; margin-bottom: 2px;">${nomeCampo}</h6>
+            <div class="progress" style="height: 25px;" title="${tooltip.trim()}">
+              <div class="progress-bar" 
+                   style="width: ${progressBarWidth}%; background: ${progressColor}; transition: width 0.6s; height: 25px;">
+                <span class="progress-value">${valorNumerico}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    
+      return progressoHtml.reduce((html, progresso, index) => {
+        if (index % 2 === 0) html += `<div class="progress-row">`;
+        html += progresso;
+        if (index % 2 === 1 || index === progressoHtml.length - 1) html += `</div>`;
+        return html;
+      }, '');
+    }
+
+    function criarGrafico(historico, canvasId) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+  
+      // Verificar se há dados para `historico[411]` e `historico[114]`
+      const labels = historico[114]?.map(item => {
+        const date = new Date(item.data_cadastro);
+        return date.toLocaleTimeString('pt-BR', { 
+          hour: '2-digit', 
+          minute: '2-digit', 
+          timeZone: 'UTC' 
+        });
+      }) || [];
+    
+      const loadSpeed_previsto = historico[411]?.map(item => item.valor) || labels.map(() => 0);
+      const potenciaAtiva = historico[3]?.map(item => item.valor) || labels.map(() => 0);
+      const potenciaAtiva_prevista = historico[320]?.map(item => item.valor) || labels.map(() => 0);
+      const loadSpeed = historico[114]?.map(item => item.valor) || labels.map(() => 0);
+
+      let chart; // Referência do gráfico atual
+      let isLoadSpeedChart = true; // Alternar entre os gráficos
+
+      function criarDataset(titulo, dados, cor) {
+        return {
+          label: titulo,
+          data: dados,
+          borderColor: cor,
+          pointRadius: 0,  // Remove os pontos do gráfico
+          tension: 0.4,
+          fill: true,
+          borderRadius: 10,
+          shadowOffsetX: 2,
+          shadowOffsetY: 2
+        };
+      }
+    
+      function criarDadosLoadSpeed() {
+        return {
+          labels: labels.slice(-500),  // Exibir apenas os últimos 50 labels
+          datasets: [
+            criarDataset('Load Speed Previsto', loadSpeed_previsto, 'rgba(255, 80, 80, 1)'),
+            criarDataset('Load Speed Real', loadSpeed, 'rgba(255, 0, 0, 1)')
+          ]
+        };
+      }
+
+      function criarDadosPotenciaAtiva() {
+        return {
+          labels: labels.slice(-500),  // Exibir apenas os últimos 50 labels
+          datasets: [
+            criarDataset('Pot Ativa Prevista', potenciaAtiva_prevista, 'rgba(102, 178, 255, 1)'),
+            criarDataset('Pot Ativa Real', potenciaAtiva, 'rgba(0, 123, 255, 1)')
+          ]
+        };
+      }
+
+      function criarConfig(dados) {
+        // Limite de dados no gráfico
+        if (dados.labels.length > 10) {
+          dados.labels.shift(); // Remove o primeiro ponto do eixo x
+          dados.datasets.forEach(dataset => dataset.data.shift()); // Remove o primeiro ponto de cada dataset
+        }
+        return {
+          type: 'line',
+          data: dados,
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: true }
+            },
+            scales: {
+        //      x: { max: 100 },
+              y: { beginAtZero: true }
+            }
+          }
+        };
+      }
+
+      function atualizarGrafico() {
+        const dados = isLoadSpeedChart ? criarDadosLoadSpeed() : criarDadosPotenciaAtiva();
+        if (chart) chart.destroy(); // Destruir o gráfico anterior
+        chart = new Chart(ctx, criarConfig(dados));
+        isLoadSpeedChart = !isLoadSpeedChart; // Alternar entre os gráficos
+      }
+    
+      atualizarGrafico(); // Renderizar o primeiro gráfico
+    
+      // Alternar o gráfico a cada 10 segundos
+      setInterval(atualizarGrafico, 10000);
+    }
+    
+    setInterval(carregarEquipamentos, 50000);
+    carregarEquipamentos();
+    
+  </script>
+
+</body>
+
+</html>
