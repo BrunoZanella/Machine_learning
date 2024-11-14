@@ -3592,10 +3592,10 @@ async def monitorar_leituras_consecutivas(pool):
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n','------------------------------------------------------------------------------ inicio monitorar_leituras_consecutivas -------------------------------------------------------------------------------------------', data_cadastro_formatada,'\n')
+        print('\n','------------------------------------------------------------- inicio monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada,'\n')
 
-        print('equipamentos_com_alerta',equipamentos_com_alerta)
-        print('equipamentos_alerta_0',equipamentos_alerta_0)
+        # print('equipamentos_com_alerta',equipamentos_com_alerta)
+        # print('equipamentos_alerta_0',equipamentos_alerta_0)
 
         try:
 
@@ -3911,7 +3911,7 @@ async def monitorar_leituras_consecutivas(pool):
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n','------------------------------------------------------------------------------ fim monitorar_leituras_consecutivas -------------------------------------------------------------------------------------------', data_cadastro_formatada_final)
+        print('\n','------------------------------------------------------------- fim monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada_final)
         print(f'Tempo de execução do monitorar_leituras_consecutivas: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
         
         
@@ -5513,16 +5513,22 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 '''
 
 
+
+
+
+from datetime import datetime, timedelta
+import pandas as pd
+import asyncio
+
 async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     while True:
-
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n','------------------------------------------------------------------------------ inicio processar_equipamentos -------------------------------------------------------------------------------------------', data_cadastro_formatada,'\n')
+        print('\n', '----------------------------------- inicio processar_equipamentos -----------------------------------', data_cadastro_formatada, '\n')
 
         try:
             async with pool.acquire() as conn:
-                await conn.ping(reconnect=True)  # Forçar reconexão
+                await conn.ping(reconnect=True)
                 async with conn.cursor() as cursor:
                     # Buscando dados de todos os equipamentos e campos de uma vez
                     query = f"""
@@ -5541,7 +5547,7 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 
                     # Processamento em paralelo por equipamento
                     tasks = [
-                        processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_especificados) 
+                        processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_especificados)
                         for cod_equipamento in cod_equipamentos
                     ]
                     await asyncio.gather(*tasks)
@@ -5549,21 +5555,17 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
         except Exception as e:
             print(f"Erro ao processar os equipamentos: {str(e)}")
 
+        # Tempo de execução
         tempo_final = datetime.now()
         data_cadastro_formatada_final = tempo_final.strftime('%d-%m-%Y %H:%M')
-
-        # Calcular o tempo de execução
         tempo_execucao = tempo_final - tempo_inicial
-
-        # Formatando a diferença de tempo
         segundos = tempo_execucao.total_seconds()
         horas = int(segundos // 3600)
         minutos = int((segundos % 3600) // 60)
         segundos_restantes = int(segundos % 60)
 
-        # Exibindo o tempo total de execução
-        print('\n','------------------------------------------------------------------------------ fim processar_equipamentos -------------------------------------------------------------------------------------------', data_cadastro_formatada_final)
-        print(f'Tempo de execução do processar_equipamentos: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
+        print('\n', '----------------------------------- fim processar_equipamentos -----------------------------------', data_cadastro_formatada_final)
+        print(f'Tempo de execução: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
         
         await asyncio.sleep(30)
 
@@ -5572,23 +5574,32 @@ async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_e
         # Filtrar dados para o equipamento específico
         df_equipamento = df[df['cod_equipamento'] == cod_equipamento]
 
+        # Verificar se a data de cadastro é mais recente que 1 hora
+        uma_hora_atras = datetime.now() - timedelta(hours=1)
+
         for cod in cod_campo_especificados:
-            valores_cod_campo = df_equipamento[df_equipamento['cod_campo'] == int(cod)]['valor'].values
-            data_cadastro_recente = df_equipamento[df_equipamento['cod_campo'] == int(cod)]['data_cadastro'].max()
-            
-            # Pegue o valor mais recente
+            df_campo = df_equipamento[df_equipamento['cod_campo'] == int(cod)]
+            if df_campo.empty:
+                continue
+
+            data_cadastro_recente = df_campo['data_cadastro'].max()
+
+            # Ignorar se a data de cadastro é mais antiga que 1 hora
+            if data_cadastro_recente < uma_hora_atras:
+            #    print(f"Equipamento {cod_equipamento}, campo {cod} ignorado. Dados desatualizados (mais de 1 hora).")
+                continue
+
+            valores_cod_campo = df_campo['valor'].values
             valor_recente = valores_cod_campo[-1] if len(valores_cod_campo) > 0 else 0
 
-            # Pegue os últimos 4 valores anteriores, mais o valor recente para inserir em valor_5
-            valores = list(valores_cod_campo[-4:])[::-1]  # Últimos 4 valores
-            valores = [0] * (4 - len(valores)) + valores  # Preencher com zeros se necessário
-
-            # Adicionar o valor recente no final
+            # Pegue os últimos 4 valores e preencha com zeros se necessário
+            valores = list(valores_cod_campo[-4:])[::-1]
+            valores = [0] * (4 - len(valores)) + valores
             valores.append(valor_recente)
 
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    # Verifique se já existe um registro com a mesma data_cadastro ou mais recente na tabela `leituras_consecutivas`
+                    # Verificar data_cadastro na tabela leituras_consecutivas
                     check_query = """
                     SELECT data_cadastro FROM machine_learning.leituras_consecutivas 
                     WHERE cod_equipamento = %s AND cod_campo = %s
@@ -5596,24 +5607,13 @@ async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_e
                     """
                     await cursor.execute(check_query, (cod_equipamento, cod))
                     data_cadastro_consecutiva = await cursor.fetchone()
-                    
-                    # Verificações:
-                    # 1. Se já existir um registro com data_cadastro igual ou maior, pula a inserção
-                    # 2. Se a diferença entre a data_cadastro da leitura e a da tabela leituras_consecutivas for maior que 30 minutos, pula também
-                    if data_cadastro_consecutiva:
-                        ultima_data_cadastro = data_cadastro_consecutiva[0]
-                        diferenca_minutos = (data_cadastro_recente - ultima_data_cadastro).total_seconds() / 60
 
-                        # Condições para ignorar a inserção:
-                        if (
-                            data_cadastro_recente <= ultima_data_cadastro or  # Data igual ou mais antiga
-                            diferenca_minutos > 30  # Diferença maior que 30 minutos
-                        ):
-                    #        print(f"Pulando inserção para equipamento {cod_equipamento} e campo {cod}.")
-                    #        print(f"Data da leitura: {data_cadastro_recente}, Última data: {ultima_data_cadastro}, Diferença: {diferenca_minutos:.2f} minutos.")
-                            continue
+                    # Continuar se data_cadastro for igual ou maior
+                    if data_cadastro_consecutiva and data_cadastro_consecutiva[0] == data_cadastro_recente:
+                    #    print(f"Equipamento {cod_equipamento}, campo {cod} já possui registro na data {data_cadastro_recente}.")
+                        continue
 
-                    # Atualizar leituras consecutivas
+                    # Inserir dados na tabela leituras_consecutivas
                     insert_query = """
                     INSERT INTO machine_learning.leituras_consecutivas 
                     (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
@@ -5626,15 +5626,11 @@ async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_e
                     valor_5 = VALUES(valor_5),
                     data_cadastro = VALUES(data_cadastro)
                     """
-                    # Execute a query com os valores corretos
                     await cursor.execute(insert_query, (cod_equipamento, cod, *valores))
-
-                # Commit na conexão
-                await conn.commit()
+                    await conn.commit()
 
     except Exception as e:
         print(f"Erro ao processar dados do equipamento {cod_equipamento}: {str(e)}")
-
 
 
 
@@ -5787,7 +5783,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n','-------------------------------------------------------------------- inicio enviar_previsao_valor_equipamento_alerta ---------------------------------------------------------------------------------',data_cadastro_formatada,'\n')
+        print('\n','--------------------------------------------------- inicio enviar_previsao_valor_equipamento_alerta ----------------------------------------------------------------',data_cadastro_formatada,'\n')
 
         for cod_equipamento in cod_equipamentos:
             try:
@@ -6230,10 +6226,10 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n','-------------------------------------------------------------------- fim enviar_previsao_valor_equipamento_alerta ---------------------------------------------------------------------------------', data_cadastro_formatada_final, '\n')
+        print('\n','--------------------------------------------------- fim enviar_previsao_valor_equipamento_alerta ----------------------------------------------------------------', data_cadastro_formatada_final, '\n')
         print(f'Tempo de execução do enviar_previsao_valor_equipamento_alerta: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(180)
 
 
 
@@ -6261,7 +6257,7 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n','------------------------------------------------------------------------------ inicio enviar_alerta_80_100 -------------------------------------------------------------------------------------------', data_cadastro_formatada,'\n')
+        print('\n','------------------------------------------------------------- inicio enviar_alerta_80_100 --------------------------------------------------------------------------', data_cadastro_formatada,'\n')
 
 
         for cod_equipamento in cod_equipamentos:
@@ -6307,21 +6303,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                         # Ignora leituras muito antigas
                         if agora - data_cadastro_consecutivas > timedelta(hours=1):
                             continue
-                        
-                #        print('equipamento',cod_equipamento,'no alerta 80%')
-                
-                        ###############  inicio do verificar a necessidade de nao entrar se for 0 potencia ativa   ##############################################################################
-
-                        # # Obter o valor de cod_campo 3
-                        # await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 3 AND cod_equipamento = %s", (cod_equipamento,))
-                        # valores_atuais_3 = await cursor.fetchone()
-
-                        # # Verificar se cod_campo 3 é None ou se todos os valores são zero, caso seja, pule para a próxima iteração
-                        # if valores_atuais_3 is None or all(valor == 0 for valor in valores_atuais_3):
-                        #     continue
-                        
-                        ###############  fim do verificar a necessidade de nao entrar se for 0 potencia ativa   ##############################################################################
-
 
                         # Atualiza os últimos 5 valores
                         if cod_equipamento not in ultimos_valores:
@@ -7072,10 +7053,10 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n','------------------------------------------------------------------------------ fim enviar_alerta_80_100 -------------------------------------------------------------------------------------------', data_cadastro_formatada_final)
+        print('\n','------------------------------------------------------------- fim enviar_alerta_80_100 --------------------------------------------------------------------------', data_cadastro_formatada_final)
         print(f'Tempo de execução do enviar_alerta_80_100: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(120)
       
 
 
@@ -8389,10 +8370,10 @@ lista_parametros_previsao = {
         #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
         #         'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
         #     },
-    #         'abaixo': {
-    #             'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
-    #             'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
-    #         },
+             'abaixo': {
+                 'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
+                 'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
+                 },
         #     'abaixo': {
         #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
         # #        'Temperatura da Água': {'tipo': 'real', 'condicao': 'abaixo'}
@@ -8464,7 +8445,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n',f'loop número {contador_loop} ------------------------------------------------ inicio novo_enviar_previsao_valor_equipamento_alerta_novo ----------------------------------------------------------------------', data_cadastro_formatada, '\n')
+        print('\n',f'loop número {contador_loop} ------------------------------- inicio novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada, '\n')
 
         if not equipamentos_ativos:
             await carregar_equipamentos_ativos(pool)
@@ -8595,7 +8576,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                             id_telegram, nome_usuario, ativo = result
                                                             if ativo == 1:
                                                                 try:
-                                                                    nomes_usuarios.append(nome_usuario)
+                                                                #    nomes_usuarios.append(nome_usuario)
 
                                                                     # Recuperar nome_usina da lista equipamentos_alertados
                                                                     nome_usina = next(
@@ -8612,6 +8593,8 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                                                                     if cod_modelo_funcionamento not in [4, 12, 14]:
 
+                                                                        nomes_usuarios.append(nome_usuario)
+                                                                        
                                                                         # Constrói a mensagem com os equipamentos e as mensagens de alerta
                                                                         mensagem = (
                                                                             f"🔴 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
@@ -8691,7 +8674,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                             if chave_principal == "Load Speed":
                                 # Verifica se o valor atual de 'load speed' está acima de 50
                                 if valores_atuais.get("load speed", 0) < 50:
-                            #        print('valor de load speed menor que 50')
+                                #    print('valor de load speed menor que 50')
                                     # Se o valor de 'load speed' for menor que 50, pula para o próximo parâmetro
                                     continue
 
@@ -8938,7 +8921,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n',f'loop número {contador_loop} ----------------------------------------------------- fim novo_enviar_previsao_valor_equipamento_alerta_novo ----------------------------------------------------------------------', data_cadastro_formatada_final)
+        print('\n',f'loop número {contador_loop} ------------------------------------ fim novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada_final)
         print(f'Tempo de execução do novo_enviar_previsao_valor_equipamento_alerta_novo: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
         await asyncio.sleep(30)
@@ -9174,7 +9157,7 @@ async def on_startup(dp: Dispatcher):
     cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
     cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
     cod_campo_especificados = ['3', '114']
-            
+             
     try:
         # Cancelar quaisquer tarefas remanescentes que não foram finalizadas
         for task in asyncio.all_tasks():

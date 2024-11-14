@@ -37,6 +37,12 @@ async def main():
 
     # Criar conexão com o banco
     pool = await create_pool()
+
+    global ultimos_valores
+    global alertas_enviados
+    global hora_media_alerta_1_80
+    global hora_media_alerta_1_100
+    global hora_media_alerta_80_100_saida
     
     # Obtenha parâmetros necessários
     tabelas = 'sup_geral.leituras'
