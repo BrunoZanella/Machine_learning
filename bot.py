@@ -3187,7 +3187,6 @@ async def teste_menu(message: types.Message):
 
         async with pool.acquire() as conn:
             await conn.ping(reconnect=True)  # Forçar reconexão
-            await conn.ping(reconnect=True)  # Forçar reconexão
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
                 result = await cursor.fetchone()
@@ -7887,27 +7886,27 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
     # Normalizar as chaves para remover "(Bar)" ou outros elementos entre parênteses
     parametros_motor_normalizado = {re.sub(r'\s*\(.*?\)\s*', '', chave): valor for chave, valor in parametros_motor.items()}
 
-    min_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('min', 5)
-    max_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('max', 80)
+    # min_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('min', 5)
+    # max_load_speed = parametros_motor_normalizado.get('Load Speed', {}).get('max', 80)
 
-    min_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('min', 20)
-    max_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('max', 100)
+    # min_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('min', 20)
+    # max_temp_ar_admissao = parametros_motor_normalizado.get('Temperatura do ar de admissão', {}).get('max', 100)
 
-    min_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('min', 0)
-    max_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('max', 6)
+    # min_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('min', 0)
+    # max_pressao_admissao = parametros_motor_normalizado.get('Pressão de admissão', {}).get('max', 6)
 
-    min_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('min', 20)
-    max_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)
+    # min_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('min', 20)
+    # max_potencia_ativa = parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)
 
-    min_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('min', 3.5)
-    max_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('max', 5.0)
+    # min_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('min', 3.5)
+    # max_pressao_oleo = parametros_motor_normalizado.get('Pressão do Óleo', {}).get('max', 5.0)
 
-    min_rpm = parametros_motor_normalizado.get('RPM', {}).get('min', 1798)
-    max_rpm = parametros_motor_normalizado.get('RPM', {}).get('max', 1802)
+    # min_rpm = parametros_motor_normalizado.get('RPM', {}).get('min', 1798)
+    # max_rpm = parametros_motor_normalizado.get('RPM', {}).get('max', 1802)
 
-    min_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('min', 103)
-    max_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('max', 103)
-    alerta_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('alerta', 90)
+    # min_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('min', 103)
+    # max_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('max', 103)
+    # alerta_temp_agua = parametros_motor_normalizado.get('Temperatura da água', {}).get('alerta', 90)
 
     # print('\nparâmetros do equipamento', cod_equipamento, 
     #       '\nLoad Speed', min_load_speed, '-->', max_load_speed,
@@ -7932,7 +7931,8 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
         'Potência Ativa': {
             'min': parametros_motor_normalizado.get('Potência Ativa', {}).get('min', 0),
             # O limite máximo é definido como 90% da Potência Nominal
-            'max': potencia_nominal * 0.9 if potencia_nominal else parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)
+        #    'max': potencia_nominal * 0.7 if potencia_nominal else parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400)
+            'max': round(potencia_nominal * 0.8, 1) if potencia_nominal else round(parametros_motor_normalizado.get('Potência Ativa', {}).get('max', 400), 1)
         },
         'Pressão do Óleo': {'min': parametros_motor_normalizado.get('Pressão do Óleo', {}).get('min', 3.5),
                             'max': parametros_motor_normalizado.get('Pressão do Óleo', {}).get('max', 5.0)},
@@ -8235,7 +8235,8 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                 # Verifique se 'Potência Nominal' está em valores_atuais
                 if 'Potência Nominal' in valores_atuais:
                     potencia_nominal_atual = valores_atuais['Potência Nominal'][-1]  # Último valor de Potência Nominal
-                    potencia_nominal = 0.9 * potencia_nominal_atual  # Calcula 90% da Potência Nominal
+                #    potencia_nominal = 0.9 * potencia_nominal_atual  # Calcula 90% da Potência Nominal
+                    potencia_nominal = potencia_nominal_atual  # Calcula 90% da Potência Nominal
                 else:
                     potencia_nominal = 0  # Define como None caso não tenha o valor
 
@@ -8337,22 +8338,22 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
 lista_parametros_previsao = {
     'Load Speed': {
-        'previsao': {
+    #    'previsao': {
         #     'acima': {
         #         'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
         #     },
         #     'abaixo': {
         #         'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
         #     }
-        },
-        # 'real': {
-        #     'acima': {
-        #         'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
-        #     },
+    #    }
+        'real': {
+            'acima': {
+                'Potência Ativa': {'tipo': 'previsao', 'condicao': 'abaixo'}
+            },
         #     'abaixo': {
         #         'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
         #     }
-        # }
+        }
     },
     'Pressão do Óleo': {
         # 'previsao': {
@@ -8672,11 +8673,19 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                 #            print('condicoes 1',condicoes)
 
                             if chave_principal == "Load Speed":
-                                # Verifica se o valor atual de 'load speed' está acima de 50
-                                if valores_atuais.get("load speed", 0) < 50:
-                                #    print('valor de load speed menor que 50')
-                                    # Se o valor de 'load speed' for menor que 50, pula para o próximo parâmetro
+                                # Obter o valor atual de 'Load Speed'
+                                load_speed_value = valores_atuais.get("Load Speed", 0)
+
+                                # Se o valor for uma lista, pegue o ultimo elemento, senão use o valor diretamente
+                                if isinstance(load_speed_value, list):
+                                    load_speed_value = load_speed_value[4] if load_speed_value else 0
+
+                                # Verifica se o valor atual de 'Load Speed' está acima de 50
+                                if load_speed_value < 50:
+                                    print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
+                                    # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
                                     continue
+
 
                             if chave_principal in previsoes:
                                 print(f'\nChave principal: {chave_principal}')
@@ -9206,7 +9215,7 @@ async def processos_async_menos_pesados(dp: Dispatcher, limite_tarefas=5):
             tarefa_com_semaforo(clean_temp_files()),
             tarefa_com_semaforo(atualizar_usinas_usuario(dp.pool)),
             tarefa_com_semaforo(adicionar_DataQuebra_FG(dp.pool)),
-            tarefa_com_semaforo(monitor_log_file()),
+    #        tarefa_com_semaforo(monitor_log_file()),
         ]
         await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
     except asyncio.CancelledError:

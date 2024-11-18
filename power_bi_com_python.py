@@ -470,8 +470,9 @@ async def main():
 
     # Adicionar a logo no canto esquerdo
     with placeholder_logo.container():
-    #    st.logo('../imagens/log_brg_novo_branco_2.png')
-        st.logo('log_brg_novo_branco_2.png')
+        st.logo('../imagens/log_brg_novo_branco_2.png')
+    #    st.logo('log_brg_novo_branco_2.png')
+    
     #    st.image('../imagens/log_brg_novo_branco_2.png', width=150)
         st.markdown('<div class="main-container">', unsafe_allow_html=True)
         st.markdown('<h2>Relatório de Análise Preditiva Diária</h2>', unsafe_allow_html=True)
