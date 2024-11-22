@@ -3591,7 +3591,7 @@ async def monitorar_leituras_consecutivas(pool):
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n','------------------------------------------------------------- inicio monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada,'\n')
+    #    print('\n','------------------------------------------------------------- inicio monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada,'\n')
 
         # print('equipamentos_com_alerta',equipamentos_com_alerta)
         # print('equipamentos_alerta_0',equipamentos_alerta_0)
@@ -3910,8 +3910,8 @@ async def monitorar_leituras_consecutivas(pool):
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n','------------------------------------------------------------- fim monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada_final)
-        print(f'Tempo de execução do monitorar_leituras_consecutivas: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
+    #    print('\n','------------------------------------------------------------- fim monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada_final)
+    #    print(f'Tempo de execução do monitorar_leituras_consecutivas: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
         
         
         await asyncio.sleep(20)
@@ -5122,26 +5122,57 @@ import numpy as np
 async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado, pool):
     contagem_limites = 4
 
+    # async with pool.acquire() as conn:
+    #     await conn.ping(reconnect=True)  # Forçar reconexão
+    #     async with conn.cursor() as cursor:
+    #         await cursor.execute("SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
+    #         data_cadastro = await cursor.fetchone()
+
+    #         if data_cadastro is not None:
+    #             data_cadastro = data_cadastro[0]
+
+    #         agora = datetime.now()
+
+    #         if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
+    #             await cursor.execute("""
+    #                 UPDATE machine_learning.leituras_consecutivas
+    #                 SET alerta = 0
+    #                 WHERE cod_equipamento = %s
+    #             """, (int(cod_equipamento_resultado),))
+    #             await conn.commit()
+    #             return False, False, False
+
     async with pool.acquire() as conn:
         await conn.ping(reconnect=True)  # Forçar reconexão
         async with conn.cursor() as cursor:
-            await cursor.execute("SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
-            data_cadastro = await cursor.fetchone()
+            # Buscar o último data_cadastro para o equipamento e o alerta atual
+            await cursor.execute("""
+                SELECT data_cadastro, alerta 
+                FROM machine_learning.leituras_consecutivas 
+                WHERE cod_equipamento = %s AND cod_campo = 3
+            """, (int(cod_equipamento_resultado),))
+            resultado = await cursor.fetchone()
 
-            if data_cadastro is not None:
-                data_cadastro = data_cadastro[0]
-
-            agora = datetime.now()
-
-            if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
-                await cursor.execute("""
-                    UPDATE machine_learning.leituras_consecutivas
-                    SET alerta = 0
-                    WHERE cod_equipamento = %s
-                """, (int(cod_equipamento_resultado),))
-                await conn.commit()
+            if resultado is None:
+                # Nenhum registro encontrado para o equipamento
                 return False, False, False
 
+            data_cadastro, alerta = resultado
+            agora = datetime.now()
+
+            # Verificar se data_cadastro está desatualizado (mais de 1 hora)
+            if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
+                if alerta == 1:  # Atualizar o alerta somente se ele for 1
+                    await cursor.execute("""
+                        UPDATE machine_learning.leituras_consecutivas
+                        SET alerta = 0
+                        WHERE cod_equipamento = %s AND alerta = 1
+                    """, (int(cod_equipamento_resultado),))
+                    await conn.commit()
+                return False, False, False
+
+
+        
         #    if data_cadastro is not None or (agora - data_cadastro <= timedelta(hours=1)):
 
             coeficiente_existente, intercepto_existente = await verificar_e_obter_coeficiente(cod_equipamento_resultado, pool)
@@ -5519,6 +5550,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import asyncio
 
+'''
+
 async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
     while True:
         tempo_inicial = datetime.now()
@@ -5631,72 +5664,104 @@ async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_e
     except Exception as e:
         print(f"Erro ao processar dados do equipamento {cod_equipamento}: {str(e)}")
 
-
-
-
 '''
-apenas um cod_campo
-async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
+
+
+async def processar_equipamentos(cod_equipamentos, tabela_leituras, cod_campos, pool):
     while True:
-        for cod_equipamento in cod_equipamentos:
-            valores = {cod: [0, 0, 0, 0, 0] for cod in cod_campo_especificados}
-            try:
+        inicio = datetime.now()
+    #    print(f"[{inicio}] Iniciando processamento...")
+
+        try:
+            async with pool.acquire() as conn:
+                await conn.ping(reconnect=True)
+                async with conn.cursor() as cursor:
+                    # Filtrando leituras pelos cod_campos selecionados
+                    cod_campos_str = ','.join(map(str, cod_campos))  # Convertendo os cod_campos em uma string para a consulta
+                    await cursor.execute(f"""
+                        SELECT cod_equipamento, cod_campo, valor, data_cadastro
+                        FROM {tabela_leituras}
+                        WHERE cod_campo IN ({cod_campos_str})
+                    """)
+                    leituras = await cursor.fetchall()
+
+                    # Filtrando leituras consecutivas pelos cod_campos selecionados
+                    await cursor.execute(f"""
+                        SELECT cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro
+                        FROM leituras_consecutivas
+                        WHERE cod_campo IN ({cod_campos_str})
+                    """)
+                    consecutivas = await cursor.fetchall()
+
+            # Criar DataFrames
+            df_leituras = pd.DataFrame(leituras, columns=['cod_equipamento', 'cod_campo', 'valor', 'data_cadastro'])
+            df_consecutivas = pd.DataFrame(consecutivas, columns=[
+                'cod_equipamento', 'cod_campo', 'valor_1', 'valor_2', 'valor_3', 'valor_4', 'valor_5', 'data_cadastro'
+            ])
+
+            # Merge para encontrar diferenças
+            df_merged = pd.merge(
+                df_leituras, df_consecutivas,
+                on=['cod_equipamento', 'cod_campo'],
+                how='left',
+                suffixes=('_leituras', '_consecutivas')
+            )
+
+            # Filtrar registros onde data_cadastro mudou ou não existe na tabela consecutivas
+            df_atualizar = df_merged[
+                (df_merged['data_cadastro_consecutivas'].isnull()) |
+                (df_merged['data_cadastro_leituras'] != df_merged['data_cadastro_consecutivas'])
+            ]
+
+            if not df_atualizar.empty:
+                # Preparar valores para inserção/atualização
+                # Modificar valores usando .loc para evitar o SettingWithCopyWarning
+                df_atualizar.loc[:, 'valor_5'] = df_atualizar['valor']  # Usando o nome correto da coluna
+                df_atualizar.loc[:, 'valor_4'] = df_atualizar['valor_4'].fillna(0)
+                df_atualizar.loc[:, 'valor_3'] = df_atualizar['valor_3'].fillna(0)
+                df_atualizar.loc[:, 'valor_2'] = df_atualizar['valor_2'].fillna(0)
+                df_atualizar.loc[:, 'valor_1'] = df_atualizar['valor_1'].fillna(0)
+
+
+                valores = df_atualizar[['cod_equipamento', 'cod_campo', 'valor_1', 'valor_2', 'valor_3', 'valor_4', 'valor_5', 'data_cadastro_leituras']].values.tolist()
+
                 async with pool.acquire() as conn:
                     async with conn.cursor() as cursor:
-                        query = f"""
-                        SELECT data_cadastro, valor, cod_campo 
-                        FROM {tabelas} 
-                        WHERE cod_equipamento = %s 
-                        AND cod_campo IN ({', '.join(cod_campo_especificados)})
+                        # Inserção em lote
+                        insert_query = f"""
+                        INSERT INTO leituras_consecutivas 
+                        (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        valor_1 = VALUES(valor_2),
+                        valor_2 = VALUES(valor_3),
+                        valor_3 = VALUES(valor_4),
+                        valor_4 = VALUES(valor_5),
+                        valor_5 = VALUES(valor_5),
+                        data_cadastro = VALUES(data_cadastro)
                         """
-                        await cursor.execute(query, (cod_equipamento,))
-                        resultados = await cursor.fetchall()
+                        await cursor.executemany(insert_query, valores)
+                        await conn.commit()
 
-                        df = pd.DataFrame(resultados, columns=['data_cadastro', 'valor', 'cod_campo'])
-                        df['data_cadastro'] = pd.to_datetime(df['data_cadastro'])
-                        df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+    #            print(f"[{datetime.now()}] {len(valores)} registros atualizados/inseridos.")
+            else:
+    #            print(f"[{datetime.now()}] Nenhuma atualização necessária.")
+                pass
 
-                        for cod in cod_campo_especificados:
-                            valores_cod_campo = df[df['cod_campo'] == int(cod)]['valor'].values
-                            valores[cod] = list(valores_cod_campo[-5:])[::-1] + valores[cod][:5-len(valores_cod_campo[-5:])]
+        except Exception as e:
+            print(f"Erro: {e}")
 
-                            await cursor.execute(f"SELECT data_cadastro FROM {tabelas} WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
-                            data_cadastro_leituras = await cursor.fetchone()
-                            if data_cadastro_leituras:
-                                data_cadastro_formatada_leituras = data_cadastro_leituras[0].strftime('%Y-%m-%d %H:%M:%S')
+        # Tempo de execução
+        fim = datetime.now()
+        duracao = (fim - inicio).total_seconds()
+    #    print(f"Processamento concluído em {duracao:.2f} segundos.")
 
-                                await cursor.execute(f"SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = %s", (cod_equipamento, cod))
-                                data_cadastro_consecutivas = await cursor.fetchone()
-                                data_cadastro_formatada_consecutivas = data_cadastro_consecutivas[0].strftime('%Y-%m-%d %H:%M:%S') if data_cadastro_consecutivas else data_cadastro_formatada_leituras
+        # Esperar 2 segundos
+        await asyncio.sleep(2)
 
-                                if data_cadastro_formatada_leituras != data_cadastro_formatada_consecutivas:
-                                    await cursor.execute(f"""
-                                    INSERT INTO machine_learning.leituras_consecutivas 
-                                    (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                    ON DUPLICATE KEY UPDATE
-                                    valor_1 = machine_learning.leituras_consecutivas.valor_2,
-                                    valor_2 = machine_learning.leituras_consecutivas.valor_3,
-                                    valor_3 = machine_learning.leituras_consecutivas.valor_4,
-                                    valor_4 = machine_learning.leituras_consecutivas.valor_5,
-                                    valor_5 = VALUES(valor_5),
-                                    data_cadastro = VALUES(data_cadastro)
-                                    """, (cod_equipamento, cod, *valores[cod][::-1], data_cadastro_formatada_leituras))
-                                    await conn.commit()
 
-            except Exception as e:
-                print(f"Erro ao processar o equipamento {cod_equipamento}: {str(e)}")
-                
-            except mysql.connector.errors.OperationalError as e:
-                if 'Lost connection to MySQL server during query' in str(e):
-                    print(f"Erro ao processar o equipamento {cod_equipamento}: {str(e)}")
-                    continue
-                else:
-                    raise
 
-        await asyncio.sleep(120)
 
-'''
 
 sem_mensagem_silenciado = set()
 
@@ -5852,6 +5917,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
 
                         if len(ultimos_alertas[cod_equipamento]) == 5:
                             media_alerta = sum(ultimos_alertas[cod_equipamento]) / len(ultimos_alertas[cod_equipamento])
+                            
                             if media_alerta == 1:
                                 await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s", (int(cod_equipamento),))
                                 valores_atuais = await cursor.fetchone()
@@ -5960,7 +6026,6 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                         alertas_por_usina[cod_usina] = []
                                     alertas_por_usina[cod_usina].append(mensagem)
                                     alertas_por_usina[cod_usina].append(mensagem_grupo)
-
 
                             elif media_alerta == 0 and cod_equipamento in alertas_enviados_previsao:
                                 print('equipamento -',cod_equipamento,'em alerta 0, valores 114 previsao depois com',valores_atuais_114)
@@ -6162,11 +6227,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                 #    print("(loop 1 'previsao') A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                     if usina_ativa_row and usina_ativa_row[0] == 1:
-                                        await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                         result = await cursor.fetchone()
                                         
                                         if result:
-                                            id_telegram, nome_usuario, ativo = result
+                                            id_telegram, nome_usuario, ativo, telefone = result
                                             if ativo == 1:
                                                 try:
                                                     nomes_usuarios.append(nome_usuario)
@@ -6177,7 +6242,43 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                     
                                                     mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
                                                     await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
-                    
+
+                                                    print('inicio do payload previsao loop')
+
+                                                    # Se o telefone é uma tupla, pega o primeiro elemento
+                                                    if isinstance(telefone, tuple):
+                                                        telefone = telefone[0]
+                                                        
+                                                    # Extrai o valor da tupla
+                                                    if telefone:  # Verifica se telefone não é None
+                                                        telefone = telefone[0]  # Pega o primeiro elemento da tupla
+                                                        telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                                        if not telefone_formatado.startswith("+"):
+                                                            telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                                        # Monta a mensagem
+                                                        mensagem_final_wtss = (
+                                                            f"🟡 **ALERTA!**\n\n"
+                                                            f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                                            + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                        )
+
+                                                        # Monta o payload
+                                                        payload = {
+                                                            "number": telefone_formatado,
+                                                            "textMessage": {
+                                                                "text": mensagem_final_wtss
+                                                            }
+                                                        }
+                                                    else:
+                                                        print("Nenhum telefone encontrado para o usuário.")
+
+                                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                    print('payload',payload)
+                                                    print('fim do payload previsao loop')
+
+
                                                     if cod_usuario in usuarios_bloqueados:
                                                         usuarios_bloqueados.remove(cod_usuario)
                                                         id_grupo = await id_chat_grupo(pool)
@@ -6207,6 +6308,44 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                         
                             mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                         #    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
+
+
+                            print('inicio do payload previsao')
+
+                            # Executa a consulta no banco
+                            await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
+                            # Retorna um único registro como tupla
+                            telefone = await cursor.fetchone()
+
+                            # Extrai o valor da tupla
+                            if telefone:  # Verifica se telefone não é None
+                                telefone = telefone[0]  # Pega o primeiro elemento da tupla
+                                telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                if not telefone_formatado.startswith("+"):
+                                    telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                # Monta a mensagem
+                                mensagem_final_wtss = (
+                                    f"**Enviada para {nomes_usuarios_str}!**\n\n"
+                                    f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                    f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                    + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                )
+
+                                # Monta o payload
+                                payload = {
+                                    "number": telefone_formatado,
+                                    "textMessage": {
+                                        "text": mensagem_final_wtss
+                                    }
+                                }
+                            else:
+                                print("Nenhum telefone encontrado para o usuário.")
+
+                            start_chat(payload)  # Chama a função para enviar via WhatsApp
+                            print('payload',payload)
+                            print('fim do payload previsao')
+                                                    
                             await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
                             nomes_usuarios.clear()
 
@@ -6910,11 +7049,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                         if usina_ativa_row and usina_ativa_row[0] == 1:
-                                            await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                             result = await cursor.fetchone()
                                             
                                             if result:
-                                                id_telegram, nome_usuario, ativo = result
+                                                id_telegram, nome_usuario, ativo, telefone = result
                                                 if ativo == 1:
                                                     try:
                                                         nomes_usuarios.append(nome_usuario)
@@ -6925,6 +7064,42 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                                         mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
 #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+
+
+                                                        print('inicio do payload 80% loop 1')
+
+                                                        # Extrai o valor da tupla
+                                                        if telefone:  # Verifica se telefone não é None
+                                                            
+                                                            # Se o telefone é uma tupla, pega o primeiro elemento
+                                                            if isinstance(telefone, tuple):
+                                                                telefone = telefone[0]  
+
+                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                                            if not telefone_formatado.startswith("+"):
+                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                                            # Monta a mensagem
+                                                            mensagem_final_wtss = (
+                                                                f"**ALERTA!**\n\n"
+                                                                f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                    #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                                                + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                            )
+
+                                                            # Monta o payload
+                                                            payload = {
+                                                                "number": telefone_formatado,
+                                                                "textMessage": {
+                                                                    "text": mensagem_final_wtss
+                                                                }
+                                                            }
+                                                        else:
+                                                            print("Nenhum telefone encontrado para o usuário.")
+
+                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                        print('payload',payload)
+                                                        print('fim do payload 80% loop 1')
 
                                                         await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
 
@@ -6954,6 +7129,44 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
                                                         
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+
+
+                                print('inicio do payload 80%')
+
+                                # Executa a consulta no banco
+                                await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
+                                # Retorna um único registro como tupla
+                                telefone = await cursor.fetchone()
+
+                                # Extrai o valor da tupla
+                                if telefone:  # Verifica se telefone não é None
+                                    telefone = telefone[0]  # Pega o primeiro elemento da tupla
+                                    telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                    if not telefone_formatado.startswith("+"):
+                                        telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                    # Monta a mensagem
+                                    mensagem_final_wtss = (
+                                        f"**Enviada para {nomes_usuarios_str}!**\n\n"
+                                        f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                        + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                    )
+
+                                    # Monta o payload
+                                    payload = {
+                                        "number": telefone_formatado,
+                                        "textMessage": {
+                                            "text": mensagem_final_wtss
+                                        }
+                                    }
+                                else:
+                                    print("Nenhum telefone encontrado para o usuário.")
+
+                                start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                print('payload',payload)
+                                print('fim do payload 80%')
+
                                 await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
 #                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
 
@@ -6984,11 +7197,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     #    print("(loop 2) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                         if usina_ativa_row and usina_ativa_row[0] == 1:
-                                            await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                             result = await cursor.fetchone()
 
                                             if result:
-                                                id_telegram, nome_usuario, ativo, todos_modelo_funcionamento = result
+                                                id_telegram, nome_usuario, ativo, todos_modelo_funcionamento, telefone = result
                                                 if ativo == 1 and todos_modelo_funcionamento == 1:
                                                     try:
                                                         nomes_usuarios.append(nome_usuario)
@@ -6999,6 +7212,42 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                                         mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
 #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+
+                                                        print('inicio do payload 80% loop 2')
+
+                                                        # Extrai o valor da tupla
+                                                        if telefone:  # Verifica se telefone não é None
+                                                            
+                                                            # Se o telefone é uma tupla, pega o primeiro elemento
+                                                            if isinstance(telefone, tuple):
+                                                                telefone = telefone[0]  
+
+                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                                            if not telefone_formatado.startswith("+"):
+                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                                            # Monta a mensagem
+                                                            mensagem_final_wtss = (
+                                                                f"**ALERTA!**\n\n"
+                                                                f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                        #        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                                                + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                            )
+
+                                                            # Monta o payload
+                                                            payload = {
+                                                                "number": telefone_formatado,
+                                                                "textMessage": {
+                                                                    "text": mensagem_final_wtss
+                                                                }
+                                                            }
+                                                        else:
+                                                            print("Nenhum telefone encontrado para o usuário.")
+
+                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                        print('payload',payload)
+                                                        print('fim do payload 80% loop 2')
+
 
                                                         await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
 
@@ -7028,6 +7277,44 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
                                                         
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+
+
+                                print('inicio do payload 80%')
+
+                                # Executa a consulta no banco
+                                await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
+                                # Retorna um único registro como tupla
+                                telefone = await cursor.fetchone()
+
+                                # Extrai o valor da tupla
+                                if telefone:  # Verifica se telefone não é None
+                                    telefone = telefone[0]  # Pega o primeiro elemento da tupla
+                                    telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                    if not telefone_formatado.startswith("+"):
+                                        telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                    # Monta a mensagem
+                                    mensagem_final_wtss = (
+                                        f"**Enviada para {nomes_usuarios_str}!**\n\n"
+                                        f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                        + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                    )
+
+                                    # Monta o payload
+                                    payload = {
+                                        "number": telefone_formatado,
+                                        "textMessage": {
+                                            "text": mensagem_final_wtss
+                                        }
+                                    }
+                                else:
+                                    print("Nenhum telefone encontrado para o usuário.")
+
+                                start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                print('payload',payload)
+                                print('fim do payload 80%')
+
                                 await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
 #                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
                                 nomes_usuarios.clear()
@@ -7058,6 +7345,70 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
         await asyncio.sleep(120)
       
 
+import requests
+
+def start_chat(payload):
+    url_base = "http://192.168.15.60:8080"
+    url = f"{url_base}/message/sendText/Suporte_BRG"
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "apikey": "k3v14ilstiguaumoz8nzt",
+                "Content-Type": "application/json"
+            }
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "PENDING":
+                print(f"A mensagem está na fila (PENDING). Aguardando entrega...")
+                message_id = data['message']['id']
+                check_message_status(message_id)
+            else:
+                print("Mensagem enviada com sucesso:", data)
+        else:
+            print(f"Erro ao enviar mensagem. Código: {response.status_code}, Resposta: {response.text}")
+
+    except requests.exceptions.RequestException as e:
+        print("Erro de conexão ao enviar mensagem:", e)
+    except Exception as e:
+        print("Erro inesperado ao enviar mensagem:", e)
+
+
+
+# Função para verificar o status da mensagem após o envio
+def check_message_status(message_id):
+    url_base = "http://192.168.15.60:8080"
+    url = f"{url_base}/message/status/{message_id}"
+
+    # Espera um tempo antes de verificar o status novamente
+    time.sleep(10)  # Aguarda 10 segundos (ajuste conforme necessário)
+
+    try:
+        # Faz uma nova requisição para verificar o status
+        response = requests.get(url)
+
+        if response.status_code == 200:
+            data = response.json()
+            status = data.get("status", "UNKNOWN")
+
+            if status == "DELIVERED":
+                print("Mensagem entregue com sucesso!")
+            elif status == "PENDING":
+                print("A mensagem ainda está na fila. Tentando novamente...")
+                # Se o status ainda for PENDING, podemos verificar novamente após outro tempo
+                check_message_status(message_id)
+            else:
+                print(f"Mensagem com status desconhecido: {status}")
+        else:
+            print(f"Erro ao verificar status. Código: {response.status_code}, Resposta: {response.text}")
+
+    except Exception as e:
+        print("Erro ao verificar status:", e)
+        
 
 async def processar_alertas_equipamento(cod_equipamento, cursor, pool, hora_media_alerta_1_100, hora_media_alerta_1_80, hora_media_alerta_80_100_saida):
     # Obter valores atuais para o equipamento
@@ -7979,9 +8330,9 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
 
     }
 
-    # print('\n')
-    # for sensor, limite in limites.items():
-    #     print(f"{sensor}: Min: {limite['min']}, Max: {limite['max']}")
+    print('\n')
+    for sensor, limite in limites.items():
+        print(f"{sensor}: Min: {limite['min']}, Max: {limite['max']}")
         
     # Adiciona a coluna Alerta com valor padrão 0
     df['Alerta'] = 0
@@ -8052,7 +8403,13 @@ limites_tolerancia = {
     'Tensao L3-L1': 10
 }
 
-
+# Função auxiliar para conversão segura de string para float
+def converter_para_float(valor):
+    try:
+        return float(valor)
+    except (ValueError, TypeError):
+        return None
+    
 async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
     global equipamentos_ativos
@@ -8077,6 +8434,7 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
         114: 'Load Speed',
         120: 'Potência Nominal',
     }
+    
     contagem_limites = 4
     contagem_acima_do_limite = {}
     contagem_abaixo_do_limite = {}
@@ -8123,30 +8481,36 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
                 # Verificar a data de cadastro para cod_campo = 3
                 await cursor.execute(
-                    "SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3",
+                    """
+                    SELECT data_cadastro 
+                    FROM machine_learning.leituras_consecutivas 
+                    WHERE cod_equipamento = %s AND cod_campo = 3
+                    """,
                     (cod_equipamento,)
                 )
                 data_cadastro = await cursor.fetchone()
 
-                if data_cadastro is not None:
+                if data_cadastro:
                     data_cadastro = data_cadastro[0]
 
                 agora = datetime.now()
 
-                if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
+                # Verificar se o data_cadastro está ausente ou desatualizado em mais de 1 hora
+                if not data_cadastro or (agora - data_cadastro > timedelta(hours=1)):
                     await cursor.execute("""
                         UPDATE machine_learning.leituras_consecutivas
                         SET alerta = 0
                         WHERE cod_equipamento = %s
                     """, (cod_equipamento,))
                     await conn.commit()
-                #    print('setando o equipamento', cod_equipamento,"para zero da tabela leituras_consecutivas, pois tem mais de 1 hora sem atualizacao")
+                #    print(f"Equipamento {cod_equipamento}: alerta setado para 0, mais de 1 hora sem atualização.")
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
 
                 # Verificar se a diferença é maior que 15 minutos
                 if (agora - data_cadastro) > timedelta(minutes=15):
-                #    print(f"Equipamento {cod_equipamento}: Ignorado, data_cadastro é mais de 10 minutos atrás.")
+                #    print(f"Equipamento {cod_equipamento}: Ignorado, data_cadastro é mais de 15 minutos atrás.")
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+
     
 #                print('\n----------------------------------------------------------------------------------------------------------------\n')
 
@@ -8275,17 +8639,69 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                             if sensor_nome in limites_variaveis['limite_menos'] and valor < limite_menos:
                                 contagem_abaixo_do_limite[sensor_nome] += 1
 
+                # # Verificar limites para os valores previstos, comparando com os valores reais
+                # for sensor_nome, valores_previsao in previsoes.items():
+                #     contagem_acima_do_limite_previsao[sensor_nome] = 0
+                #     contagem_abaixo_do_limite_previsao[sensor_nome] = 0
+
+                #     # Verificar se o sensor possui um limite de tolerância definido no dicionário
+                #     if sensor_nome in limites_tolerancia and sensor_nome in valores_atuais:
+                #         limite_tolerancia = limites_tolerancia[sensor_nome]
+                #         valores_atuais_sensor = valores_atuais[sensor_nome]  # Os valores reais
+
+                #         for valor_previsao, valor_atual in zip(valores_previsao, valores_atuais_sensor):
+                #             # Definir os limites com base no valor previsto
+                #             limite_mais_previsao = valor_previsao + limite_tolerancia
+                #             limite_menos_previsao = valor_previsao - limite_tolerancia
+
+                #             # Verificar se o valor atual excede esses limites
+                #             if valor_atual > limite_mais_previsao:
+                #                 contagem_acima_do_limite_previsao[sensor_nome] += 1
+                #             if valor_atual < limite_menos_previsao:
+                #                 contagem_abaixo_do_limite_previsao[sensor_nome] += 1
+                #     else:
+                #         print(f"Limite de tolerância ou valores atuais não definidos para o sensor: {sensor_nome}")
+
+
+                #     # Ajuste os contadores para 0 ou 1
+                #     contagem_acima_do_limite_previsao[sensor_nome] = 1 if contagem_acima_do_limite_previsao[sensor_nome] > contagem_limites else 0
+                #     contagem_abaixo_do_limite_previsao[sensor_nome] = 1 if contagem_abaixo_do_limite_previsao[sensor_nome] > contagem_limites else 0
+                #     contagem_acima_do_limite[sensor_nome] = 1 if contagem_acima_do_limite.get(sensor_nome, 0) > contagem_limites else 0
+                #     contagem_abaixo_do_limite[sensor_nome] = 1 if contagem_abaixo_do_limite.get(sensor_nome, 0) > contagem_limites else 0
+
+
+
                 # Verificar limites para os valores previstos, comparando com os valores reais
                 for sensor_nome, valores_previsao in previsoes.items():
                     contagem_acima_do_limite_previsao[sensor_nome] = 0
                     contagem_abaixo_do_limite_previsao[sensor_nome] = 0
 
-                    # Verificar se o sensor possui um limite de tolerância definido no dicionário
-                    if sensor_nome in limites_tolerancia and sensor_nome in valores_atuais:
+                    # Verificar se o sensor possui um limite de tolerância definido e se os valores atuais existem
+                    if sensor_nome in limites_tolerancia:
                         limite_tolerancia = limites_tolerancia[sensor_nome]
+                        
+                        # Verifique se os valores atuais para o sensor existem
+                        if sensor_nome not in valores_atuais:
+                            print(f"Valores atuais não disponíveis para o sensor: {sensor_nome}")
+                            continue
+                        
                         valores_atuais_sensor = valores_atuais[sensor_nome]  # Os valores reais
 
+                        # Certifique-se de que os valores previstos e atuais são listas e têm o mesmo comprimento
+                        if not isinstance(valores_previsao, list) or not isinstance(valores_atuais_sensor, list):
+                            print(f"Os valores para {sensor_nome} não são listas ou estão incorretos.")
+                            continue
+
                         for valor_previsao, valor_atual in zip(valores_previsao, valores_atuais_sensor):
+                            # Converter para float
+                            valor_previsao = converter_para_float(valor_previsao)
+                            valor_atual = converter_para_float(valor_atual)
+
+                            # Verificar se a conversão foi bem-sucedida
+                            if valor_previsao is None or valor_atual is None:
+                                print(f"Erro ao converter valores para float no sensor: {sensor_nome}")
+                                continue
+
                             # Definir os limites com base no valor previsto
                             limite_mais_previsao = valor_previsao + limite_tolerancia
                             limite_menos_previsao = valor_previsao - limite_tolerancia
@@ -8296,24 +8712,28 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                             if valor_atual < limite_menos_previsao:
                                 contagem_abaixo_do_limite_previsao[sensor_nome] += 1
                     else:
-                        print(f"Limite de tolerância ou valores atuais não definidos para o sensor: {sensor_nome}")
+                        print(f"Limite de tolerância não definido para o sensor: {sensor_nome}")
 
-
-                    # Ajuste os contadores para 0 ou 1
-                    contagem_acima_do_limite_previsao[sensor_nome] = 1 if contagem_acima_do_limite_previsao[sensor_nome] > contagem_limites else 0
-                    contagem_abaixo_do_limite_previsao[sensor_nome] = 1 if contagem_abaixo_do_limite_previsao[sensor_nome] > contagem_limites else 0
+                # Ajuste os contadores para 0 ou 1
+                for sensor_nome in sensores.values():
+                    contagem_acima_do_limite_previsao[sensor_nome] = 1 if contagem_acima_do_limite_previsao.get(sensor_nome, 0) > contagem_limites else 0
+                    contagem_abaixo_do_limite_previsao[sensor_nome] = 1 if contagem_abaixo_do_limite_previsao.get(sensor_nome, 0) > contagem_limites else 0
                     contagem_acima_do_limite[sensor_nome] = 1 if contagem_acima_do_limite.get(sensor_nome, 0) > contagem_limites else 0
                     contagem_abaixo_do_limite[sensor_nome] = 1 if contagem_abaixo_do_limite.get(sensor_nome, 0) > contagem_limites else 0
 
-                # for sensor in ['Load Speed', 'Potência Ativa', 'Potência Nominal', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão']:
-                #     if sensor in valores_atuais:
-                #         print(f'\n{sensor} Atual:', valores_atuais[sensor])
-                #         print(f'Contagem Acima do Limite Real ({sensor}):', contagem_acima_do_limite.get(sensor, 0))
-                #         print(f'Contagem Abaixo do Limite Real ({sensor}):', contagem_abaixo_do_limite.get(sensor, 0))
-                #     if sensor in previsoes:
-                #         print(f'{sensor} Previsto:', previsoes[sensor])
-                #         print(f'Contagem Acima do Limite Previsão ({sensor}):', contagem_acima_do_limite_previsao.get(sensor, 0))
-                #         print(f'Contagem Abaixo do Limite Previsão ({sensor}):', contagem_abaixo_do_limite_previsao.get(sensor, 0))
+
+
+
+           #     for sensor in ['Load Speed', 'Potência Ativa', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão', 'Tensao L1-L2', 'Tensao L2-L3', 'Tensao L3-L1', 'Corrente L1', 'Corrente L2', 'Corrente L3', 'Frequencia', 'Tensao Bateria', 'RPM', 'Consumo', 'Horimetro', 'Temperatura da Água']:
+                for sensor in ['Load Speed', 'Potência Ativa', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão']:
+                    if sensor in valores_atuais:
+                        print(f'\n{sensor} Atual:', valores_atuais[sensor])
+                        print(f'Real Acima do Limite:', contagem_acima_do_limite.get(sensor, 0))
+                        print(f'Real Abaixo do Limite:', contagem_abaixo_do_limite.get(sensor, 0))
+                    if sensor in previsoes:
+                        print(f'{sensor} Previsto:', previsoes[sensor])
+                        print(f'Previsão Acima do Limite:', contagem_acima_do_limite_previsao.get(sensor, 0))
+                        print(f'Previsão Abaixo do Limite:', contagem_abaixo_do_limite_previsao.get(sensor, 0))
 
                 # Retornar valores reais e previstos junto com as contagens
                 return (
@@ -8348,7 +8768,8 @@ lista_parametros_previsao = {
     #    }
         'real': {
             'acima': {
-                'Potência Ativa': {'tipo': 'previsao', 'condicao': 'abaixo'}
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'},
+                'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
             },
         #     'abaixo': {
         #         'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
@@ -8371,10 +8792,10 @@ lista_parametros_previsao = {
         #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
         #         'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
         #     },
-             'abaixo': {
-                 'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
-                 'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
-                 },
+            'abaixo': {
+                'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
+#                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
+                },
         #     'abaixo': {
         #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
         # #        'Temperatura da Água': {'tipo': 'real', 'condicao': 'abaixo'}
@@ -8448,12 +8869,17 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
         print('\n',f'loop número {contador_loop} ------------------------------- inicio novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada, '\n')
 
-        if not equipamentos_ativos:
+        try:
+
+            if not equipamentos_ativos:
+                await carregar_equipamentos_ativos(pool)
+                await carregar_parametros_min_max(pool)
+
             await carregar_equipamentos_ativos(pool)
             await carregar_parametros_min_max(pool)
 
-        await carregar_equipamentos_ativos(pool)
-        await carregar_parametros_min_max(pool)
+        except Exception as e:
+            print(f"Erro ao processar novo_enviar_previsao_valor_equipamento_alerta_novo equipamento {cod_equipamento}: {str(e)}")
 
         for cod_equipamento in cod_equipamentos:
             try:
@@ -8542,7 +8968,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                 print(f"(equipamento {cod_equipamento} usina {cod_usina}) contagem_equipamentos_ativos {contagem_equipamentos_ativos}, equipamentos alertados {usinas_alertadas[cod_usina]}, percent_equipamentos_alertados {percent_equipamentos_alertados}")
 
                                 # Verificar a condição de alerta para enviar a mensagem
-                                if percent_equipamentos_alertados >= 20 and cod_usina not in usinas_enviadas:
+                                if percent_equipamentos_alertados >= 15 and cod_usina not in usinas_enviadas:
 
                                     # Buscar o nome e o código do modelo de funcionamento da usina
                                     await cursor.execute("SELECT nome, cod_modelo_funcionamento FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
@@ -8570,11 +8996,11 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                             #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                                     if usina_ativa_row and usina_ativa_row[0] == 1:
-                                                        await cursor.execute("SELECT id_telegram, usuario, ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                                         result = await cursor.fetchone()
                                                         
                                                         if result:
-                                                            id_telegram, nome_usuario, ativo = result
+                                                            id_telegram, nome_usuario, ativo, telefone = result
                                                             if ativo == 1:
                                                                 try:
                                                                 #    nomes_usuarios.append(nome_usuario)
@@ -8613,6 +9039,54 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                                         # Envia a mensagem formatada
                                                                         await bot.send_message(id_telegram, mensagem, parse_mode='HTML')
 
+
+                                                                        print('inicio do payload previsao novo')
+
+                                                                        # Executa a consulta no banco
+                                                                    #    await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
+                                                                        # Retorna um único registro como tupla
+                                                                    #    telefone = await cursor.fetchone()
+
+                                                                        # Extrai o valor da tupla
+                                                                        if telefone:  # Verifica se telefone não é None
+
+                                                                            # Se o telefone é uma tupla, pega o primeiro elemento
+                                                                            if isinstance(telefone, tuple):
+                                                                                telefone = telefone[0]        
+                                                                                                                                                      
+                                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                                                            if not telefone_formatado.startswith("+"):
+                                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                                                            # Monta a mensagem
+                                                                            mensagem_final_wtss = (
+                                                                                f"🟡 ALERTA! \n\n"
+                                                                                f"Usina: {cod_usina} - {nome_usina}\n"
+                                                                    #            f"Ir para o equipamento: https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}\n\n"
+                                                                                f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
+                                                                                f"Previsão para {chave_principal} acima do limite.\n"
+                                                                                f"Valores reais: {valores_reais_formatados}\n"
+                                                                                f"Valores previstos: {valores_previstos_formatados}\n\n"
+                                                                                f"Parâmetros fora do padrão: {', '.join(condicoes_acima)}\n"
+                                                                                f"Valores reais: {valores_reais_subparametro}\n"
+                                                                                f"Valores previstos: {valores_previstos_subparametro}\n"
+                                                                            )
+
+                                                                            # Monta o payload
+                                                                            payload = {
+                                                                                "number": telefone_formatado,
+                                                                                "textMessage": {
+                                                                                    "text": mensagem_final_wtss
+                                                                                }
+                                                                            }
+                                                                        else:
+                                                                            print("Nenhum telefone encontrado para o usuário.")
+
+                                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                                        print('payload',payload)
+                                                                        print('fim do payload previsao novo')
+                                                
+                                                
                                                                     else:                                                                    
                                                                         print(f"🔴 Alerta nao foi enviado pois o funcionamento nao e autorizado enviado para usina {cod_usina} com {percent_equipamentos_alertados}% dos equipamentos em alerta.")
 
@@ -8672,19 +9146,19 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                 #            print('chave_principal 1',chave_principal)
                 #            print('condicoes 1',condicoes)
 
-                            if chave_principal == "Load Speed":
-                                # Obter o valor atual de 'Load Speed'
-                                load_speed_value = valores_atuais.get("Load Speed", 0)
+                            # if chave_principal == "Load Speed":
+                            #     # Obter o valor atual de 'Load Speed'
+                            #     load_speed_value = valores_atuais.get("Load Speed", 0)
 
-                                # Se o valor for uma lista, pegue o ultimo elemento, senão use o valor diretamente
-                                if isinstance(load_speed_value, list):
-                                    load_speed_value = load_speed_value[4] if load_speed_value else 0
+                            #     # Se o valor for uma lista, pegue o ultimo elemento, senão use o valor diretamente
+                            #     if isinstance(load_speed_value, list):
+                            #         load_speed_value = load_speed_value[4] if load_speed_value else 0
 
-                                # Verifica se o valor atual de 'Load Speed' está acima de 50
-                                if load_speed_value < 50:
-                                    print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
-                                    # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
-                                    continue
+                            #     # Verifica se o valor atual de 'Load Speed' está acima de 50
+                            #     if load_speed_value < 50:
+                            #         print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
+                            #         # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
+                            #         continue
 
 
                             if chave_principal in previsoes:
@@ -8816,7 +9290,6 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                 print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
 
 
-
                                         # Verificar 'abaixo do limite'
                                         if contagem_abaixo.get(chave_principal, 0) == 1:
                                             condicoes_abaixo = condicoes[tipo_chave_principal].get('abaixo', {})
@@ -8914,7 +9387,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                 pass
                                 
             except Exception as e:
-                print(f"Erro ao processar equipamento {cod_equipamento}: {str(e)}")
+                print(f"Erro ao processar novo_enviar_previsao_valor_equipamento_alerta_novo equipamento {cod_equipamento}: {str(e)}")
 
 
         tempo_final = datetime.now()
@@ -8937,23 +9410,22 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
 
 
-############################################### fim nova parte ########################################################################################################
+    ############################################### fim nova parte ########################################################################################################
 
 
 ############################################### inicio atualizar tabelas de quebras ########################################################################################################
 
-async def adicionar_DataQuebra_FG(pool):  # Funçao para passar data_cadastro_quebra/valores_previsão para data_cadastro/falhas_gerais
-    
+async def adicionar_DataQuebra_FG(pool):  
     tamanho_lote = 1000000
     valor_offset = 0
     
     while True:
-    #    print('Iniciando data_cadastro_quebra para tabela falhas gerais formatada como data_cadastro')
+        print('Iniciando processamento de data_cadastro_quebra para tabela falhas gerais...')
         try:
             async with pool.acquire() as conn:    
                 await conn.ping(reconnect=True)  # Forçar reconexão
                 async with conn.cursor() as cursor:
-                    # Preparar a consulta SQL para selecionar linhas
+                    # Selecionar linhas
                     await cursor.execute("""
                         SELECT 
                             vp.cod_equipamento, 
@@ -9002,29 +9474,32 @@ async def adicionar_DataQuebra_FG(pool):  # Funçao para passar data_cadastro_qu
 
                     linhas = await cursor.fetchall()
                     if not linhas:
-                    #    print('Pedro, Nenhum registro encontrado. Saindo do loop.')
-                        await asyncio.sleep(2)  
-                        continue
+                        await asyncio.sleep(2)
+                    else:
+                        # Inserir as linhas na tabela falhas_gerais
+                        for linha in linhas:
+                            cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = linha
+
+                            await cursor.execute("""
+                                INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80, alerta_100, previsao))
+
+                        #    print(f'Inserido registro para falha em equipamento {cod_equipamento}, cod_usina {cod_usina}, na data {data_cadastro_quebra} com alertas {alerta_80}, {alerta_100}, {previsao}.')
+
+                        await conn.commit()
+                    #    print('Inserções concluídas com sucesso.')
                     
-                
-                    # Inserir as linhas selecionadas na tabela falhas_gerais
-                    for linha in linhas:
-                        cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = linha
-
-                        await cursor.execute("""
-                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80, alerta_100, previsao))
-
-                        print(f'Inserido registro para falha 1 em equipamento {cod_equipamento}, cod_usina {cod_usina}, na data {data_cadastro_quebra} com alertas {alerta_80},{alerta_100},{previsao} na tabela falhas_gerais.')
-
-                    await conn.commit()
-                #    print('Transação de dados pelas planilhas valores_previsto e falhas_gerais feitas com sucesso')
-                    # Atualizar o offset para o próximo lote
+                    # Atualizar o offset
                     valor_offset += tamanho_lote
-        except:
 
-            await asyncio.sleep(3600)
+        except Exception as e:
+            print(f'Erro: {e}')
+
+        # Pausa para rodar a função novamente após 1 hora
+        print('Processamento concluído. Aguardando 1 hora para próxima execução...')
+        await asyncio.sleep(3600)
+
 
 
 ############################################### fim atualizar tabelas de quebras ########################################################################################################
@@ -9169,21 +9644,22 @@ async def on_startup(dp: Dispatcher):
              
     try:
         # Cancelar quaisquer tarefas remanescentes que não foram finalizadas
-        for task in asyncio.all_tasks():
-            if task.get_name() in ["processos_menos_pesados"]:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    print(f"Tarefa {task.get_name()} cancelada na inicialização.")
+        # for task in asyncio.all_tasks():
+        #     if task.get_name() in ["processos_menos_pesados"]:
+        #         task.cancel()
+        #         try:
+        #             await task
+        #         except asyncio.CancelledError:
+        #             print(f"Tarefa {task.get_name()} cancelada na inicialização.")
         
+        # Inicia os processos assíncronos sem travar o fluxo principal
+    #    asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
+
         # Iniciar processamento de botões prioritários
         asyncio.create_task(processar_botoes_prioritarios())
-
-        # Inicia os processos assíncronos sem travar o fluxo principal
-        asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
-
+        
         # Executa cada função pesada em seu próprio núcleo com JSON
+        subprocess.Popen(['taskset', '-c', '2', 'python3', '/home/bruno/codigos/processos_async_menos_pesados.py'])
         subprocess.Popen(['taskset', '-c', '3', 'python3', '/home/bruno/codigos/monitorar_leituras_consecutivas.py'])
         subprocess.Popen(['taskset', '-c', '4', 'python3', '/home/bruno/codigos/processar_equipamentos.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)])
         subprocess.Popen(['taskset', '-c', '5', 'python3', '/home/bruno/codigos/enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)])

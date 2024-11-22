@@ -3227,85 +3227,104 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 
 '''
 
-async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, pool):
+
+import asyncio
+import pandas as pd
+from datetime import datetime, timedelta
+
+async def processar_equipamentos(cod_equipamentos, tabela_leituras, cod_campos, pool):
     while True:
-        tempo_inicial = datetime.now()
-        print('inicio do processamento dos equipamentos',tempo_inicial)
+        inicio = datetime.now()
+        print(f"[{inicio}] Iniciando processamento...")
 
         try:
             async with pool.acquire() as conn:
+                await conn.ping(reconnect=True)
                 async with conn.cursor() as cursor:
-                    # Buscando dados de todos os equipamentos e campos de uma vez
-                    query = f"""
-                    SELECT cod_equipamento, data_cadastro, valor, cod_campo 
-                    FROM {tabelas} 
-                    WHERE cod_equipamento IN ({', '.join(map(str, cod_equipamentos))}) 
-                    AND cod_campo IN ({', '.join(cod_campo_especificados)})
-                    """
-                    await cursor.execute(query)
-                    resultados = await cursor.fetchall()
+                    # Filtrando leituras pelos cod_campos selecionados
+                    cod_campos_str = ','.join(map(str, cod_campos))  # Convertendo os cod_campos em uma string para a consulta
+                    await cursor.execute(f"""
+                        SELECT cod_equipamento, cod_campo, valor, data_cadastro
+                        FROM {tabela_leituras}
+                        WHERE cod_campo IN ({cod_campos_str})
+                    """)
+                    leituras = await cursor.fetchall()
 
-                    # Convertendo para DataFrame
-                    df = pd.DataFrame(resultados, columns=['cod_equipamento', 'data_cadastro', 'valor', 'cod_campo'])
-                    df['data_cadastro'] = pd.to_datetime(df['data_cadastro'])
-                    df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+                    # Filtrando leituras consecutivas pelos cod_campos selecionados
+                    await cursor.execute(f"""
+                        SELECT cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro
+                        FROM leituras_consecutivas
+                        WHERE cod_campo IN ({cod_campos_str})
+                    """)
+                    consecutivas = await cursor.fetchall()
 
-                    # Processamento em paralelo por equipamento
-                    tasks = [
-                        processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_especificados) 
-                        for cod_equipamento in cod_equipamentos
-                    ]
-                    await asyncio.gather(*tasks)
+            # Criar DataFrames
+            df_leituras = pd.DataFrame(leituras, columns=['cod_equipamento', 'cod_campo', 'valor', 'data_cadastro'])
+            df_consecutivas = pd.DataFrame(consecutivas, columns=[
+                'cod_equipamento', 'cod_campo', 'valor_1', 'valor_2', 'valor_3', 'valor_4', 'valor_5', 'data_cadastro'
+            ])
+
+            # Merge para encontrar diferenças
+            df_merged = pd.merge(
+                df_leituras, df_consecutivas,
+                on=['cod_equipamento', 'cod_campo'],
+                how='left',
+                suffixes=('_leituras', '_consecutivas')
+            )
+
+            # Filtrar registros onde data_cadastro mudou ou não existe na tabela consecutivas
+            df_atualizar = df_merged[
+                (df_merged['data_cadastro_consecutivas'].isnull()) |
+                (df_merged['data_cadastro_leituras'] != df_merged['data_cadastro_consecutivas'])
+            ]
+
+            if not df_atualizar.empty:
+                # Preparar valores para inserção/atualização
+                # Modificar valores usando .loc para evitar o SettingWithCopyWarning
+                df_atualizar.loc[:, 'valor_5'] = df_atualizar['valor']  # Usando o nome correto da coluna
+                df_atualizar.loc[:, 'valor_4'] = df_atualizar['valor_4'].fillna(0)
+                df_atualizar.loc[:, 'valor_3'] = df_atualizar['valor_3'].fillna(0)
+                df_atualizar.loc[:, 'valor_2'] = df_atualizar['valor_2'].fillna(0)
+                df_atualizar.loc[:, 'valor_1'] = df_atualizar['valor_1'].fillna(0)
+
+
+                valores = df_atualizar[['cod_equipamento', 'cod_campo', 'valor_1', 'valor_2', 'valor_3', 'valor_4', 'valor_5', 'data_cadastro_leituras']].values.tolist()
+
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        # Inserção em lote
+                        insert_query = f"""
+                        INSERT INTO leituras_consecutivas 
+                        (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        valor_1 = VALUES(valor_2),
+                        valor_2 = VALUES(valor_3),
+                        valor_3 = VALUES(valor_4),
+                        valor_4 = VALUES(valor_5),
+                        valor_5 = VALUES(valor_5),
+                        data_cadastro = VALUES(data_cadastro)
+                        """
+                        await cursor.executemany(insert_query, valores)
+                        await conn.commit()
+
+                print(f"[{datetime.now()}] {len(valores)} registros atualizados/inseridos.")
+            else:
+                print(f"[{datetime.now()}] Nenhuma atualização necessária.")
 
         except Exception as e:
-            print(f"Erro ao processar os equipamentos: {str(e)}")
+            print(f"Erro: {e}")
 
-        tempo_final = datetime.now()
-        print('\ntempo total de processamento dos equipamentos e campos', tempo_final - tempo_inicial)
+        # Tempo de execução
+        fim = datetime.now()
+        duracao = (fim - inicio).total_seconds()
+        print(f"Processamento concluído em {duracao:.2f} segundos.")
 
-        await asyncio.sleep(10)
+        # Esperar 2 segundos
+        await asyncio.sleep(2)
 
-async def processar_dados_por_equipamento(pool, df, cod_equipamento, cod_campo_especificados):
-    try:
-        # Filtrar dados para o equipamento específico
-        df_equipamento = df[df['cod_equipamento'] == cod_equipamento]
 
-        for cod in cod_campo_especificados:
-            valores_cod_campo = df_equipamento[df_equipamento['cod_campo'] == int(cod)]['valor'].values
 
-            # Pegue o valor mais recente
-            valor_recente = valores_cod_campo[-1] if len(valores_cod_campo) > 0 else 0
-            
-            # Pegue os últimos 4 valores anteriores, mais o valor recente para inserir em valor_5
-            valores = list(valores_cod_campo[-4:])[::-1]  # Últimos 4 valores
-            valores = [0] * (4 - len(valores)) + valores  # Preencher com zeros se necessário
-
-            # Adicionar o valor recente no final
-            valores.append(valor_recente)
-            
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    # Atualizar leituras consecutivas
-                    query = f"""
-                    INSERT INTO machine_learning.leituras_consecutivas 
-                    (cod_equipamento, cod_campo, valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                    ON DUPLICATE KEY UPDATE
-                    valor_1 = valor_2,
-                    valor_2 = valor_3,
-                    valor_3 = valor_4,
-                    valor_4 = valor_5,
-                    valor_5 = VALUES(valor_5),
-                    data_cadastro = VALUES(data_cadastro)
-                    """
-                    # Execute a query com os valores corretos
-                    await cursor.execute(query, (cod_equipamento, cod, *valores))
-                
-                # Commit na conexão
-                await conn.commit()
-
-    except Exception as e:
-        print(f"Erro ao processar dados do equipamento {cod_equipamento}: {str(e)}")
 
 
 
@@ -4835,7 +4854,7 @@ async def processar_equipamentos_async(dp):
         cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
     #    cod_campo_especificados = ['3', '114', '21', '76']
         cod_campo_especificados = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77']
-    #    await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+        await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
     
     #    await check_and_update(dp.pool)
     #    await check_and_update_falhas(dp.pool)
@@ -4854,7 +4873,7 @@ async def outros_processos_async(dp):
 
         # Certifique-se de que as tarefas são aguardadas
         tarefas = [
-            asyncio.create_task(novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool, equipamentos_ativos)),
+    #        asyncio.create_task(novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool, equipamentos_ativos)),
         ]
         await asyncio.gather(*tarefas)
     except asyncio.CancelledError:
