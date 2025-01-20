@@ -32,99 +32,168 @@ async def get_usuarios_telegram(pool):
 # Função para enviar a mensagem
 def start_chat(payload):
     url_base = "http://192.168.15.60:8080"
-#    url = f"{url_base}/message/sendList/Suporte_BRG"
-    url = f"{url_base}/message/sendText/Suporte_BRG"
+#    url = f"{url_base}/message/sendText/Suporte_BRG"
+    url = f"{url_base}/message/sendList/Suporte_BRG"
 
     try:
-        response = requests.request(
-            "POST",
+        response = requests.post(
             url,
             json=payload,
             headers={
-                "apikey": "k3v14ilstiguaumoz8nzt",  # Chave de API
+                "apikey": "k3v14ilstiguaumoz8nzt",
                 "Content-Type": "application/json"
             }
         )
 
-        if response.status_code == 200:
-            data = response.json()
-            # Verifica se a mensagem está pendente
-            if data.get("status") == "PENDING":
-                print(f"A mensagem está na fila (PENDING). Aguardando entrega...")
-                message_id = data['message']['id']
-                check_message_status(message_id)
-            else:
-                print("Mensagem enviada com sucesso:", data)
+        if response.status_code in [200, 201]:
+            print("Mensagem enviada com sucesso.")
         else:
             print(f"Erro ao enviar mensagem. Código: {response.status_code}, Resposta: {response.text}")
-
     except Exception as e:
         print("Erro ao enviar mensagem:", e)
 
 
-# Função para verificar o status da mensagem após o envio
-def check_message_status(message_id):
-    url_base = "http://192.168.15.60:8080"
-    url = f"{url_base}/message/status/{message_id}"
 
-    # Espera um tempo antes de verificar o status novamente
-    time.sleep(10)  # Aguarda 10 segundos (ajuste conforme necessário)
 
-    try:
-        # Faz uma nova requisição para verificar o status
-        response = requests.get(url)
-
-        if response.status_code == 200:
-            data = response.json()
-            status = data.get("status", "UNKNOWN")
-
-            if status == "DELIVERED":
-                print("Mensagem entregue com sucesso!")
-            elif status == "PENDING":
-                print("A mensagem ainda está na fila. Tentando novamente...")
-                # Se o status ainda for PENDING, podemos verificar novamente após outro tempo
-                check_message_status(message_id)
-            else:
-                print(f"Mensagem com status desconhecido: {status}")
-        else:
-            print(f"Erro ao verificar status. Código: {response.status_code}, Resposta: {response.text}")
-
-    except Exception as e:
-        print("Erro ao verificar status:", e)
 
 # Função principal que conecta ao banco e envia mensagens
 async def main():
     # Criar pool de conexões com o banco de dados
     pool = await create_pool()
 
-    # Obter usuários que atendem às condições
-    usuarios = await get_usuarios_telegram(pool)
+    cod_usuario = 374  # Exemplo de cod_usuario, pode ser passado como parâmetro
 
-    # Enviar mensagem para cada usuário
-    for usuario in usuarios:
-        nome_telegram, telefone = usuario
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            try:
+                # Verificar se a usina está ativa
+                await cursor.execute("SELECT ativo FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                usina_ativa_row = await cursor.fetchone()
 
-        telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")
-        if not telefone_formatado.startswith("+"):
-            telefone_formatado = f"+{telefone_formatado}"
-            
-        payload = {
-            "number": telefone_formatado,
-            "textMessage": {
-                "text": (
-                #    f"Enviada para: {nome_telegram}\n\n"
-                    f"Usina: 623 - FAZ. ÁGUA SANTA\n\n"
-                    f"🔴‼️ Equipamento: 2722 (G21 - CLIENTE):\n\n"
-                    f"Valores Atuais: 100.0, 100.0, 100.0, 100.0, 100.0\n"
-                    f"Valores Previstos: 48.0, 48.0, 50.8, 49.1, 49.1\n\n"
-                    f"Alerta: O load speed está em 100%."
-                #    f"---\n"  # Separador visual para o rodapé
-                #    f"Para acompanhar acesse o link:\n"
-                #    f"https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina=623\n\n"
-                ),
-            }
-        }
+                if usina_ativa_row and usina_ativa_row[0] == 1:
+                    # Buscar dados do usuário específico
+                    await cursor.execute(
+                        "SELECT id_telegram, usuario, ativo, telefone "
+                        "FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s",
+                        (cod_usuario,)
+                    )
+                    result = await cursor.fetchone()
 
+                    if result:
+                        id_telegram, nome_usuario, ativo, telefone = result
+
+                        # Formatar telefone
+                        telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")
+                        if not telefone_formatado.startswith("+"):
+                            telefone_formatado = f"+{telefone_formatado}"
+
+                        # Criar payload para envio
+
+                        payload = {
+                            "number": telefone_formatado,
+                            "ticke_id": f"3",
+                            "listMessage": {
+                            "title": "Usina: 623 - FAZ. ÁGUA SANTA\n\n",
+                            "description": (
+                                "🔴‼️ Equipamento: 2722 (G21 - CLIENTE):\n\n"
+                                "Valores Atuais: 100.0, 100.0, 100.0, 100.0, 100.0\n"
+                                "Valores Previstos: 48.0, 48.0, 50.8, 49.1, 49.1\n\n"
+                                "Alerta: O load speed está em 100%.\n\n"
+                            ),
+                                "footerText": (
+                                    "Para acompanhar acesse o link:\n"
+                                    "https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina=623\n\n"
+                                ),
+                            "buttonText": "Lista dos equipamentos",
+                            "sections": [
+                                {
+                                    "title": "Equipamentos da usina FAZ. ÁGUA SANTA:",
+                                    "rows": [
+                                        {
+                                            "title": "Equipamento G24 - cliente",
+                                            "description": "https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina=623&codEquip=2725",
+                                            "rowId": f"2725" # passando o ticketId para recuperar mais fácil na hora de enviar a aprovação
+                                        },
+                                        {
+                                            "title": "Equipamento G10",
+                                            "description": "https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina=623&codEquip=2678",
+                                            "rowId": f"2678" # passando o ticketId para recuperar mais fácil na hora de enviar a aprovação
+                                        }
+                                    ]
+                                }
+                            ]
+                            },
+                            "options": {
+                            "delay": 1200,
+                            "presence": "composing"
+                            },
+                            "quoted": {
+                                "key": {
+                                    "fromMe": True,
+                                    "type":"Chamado solucionado"
+                                }
+                            }
+                        }
+
+                        print(f"Mensagem preparada para {nome_usuario} com telefone {telefone_formatado}")
+                        # Aqui você pode chamar a função para enviar a mensagem usando o payload
+                        # await send_message(payload)
+
+                    else:
+                        print(f"Nenhum usuário encontrado com cod_usuario {cod_usuario}")
+                else:
+                    print(f"Usina associada ao cod_usuario {cod_usuario} não está ativa.")
+            except Exception as e:
+                print(f"Erro ao processar usuário {cod_usuario}: {e}")
+
+        
+        start_chat(payload)
+
+# Executa a função principal assíncrona
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+
+# payload = {
+#     "number": telefone_formatado,
+#     "textMessage": {
+#         "text": (
+#             f"Usina: 623 - FAZ. ÁGUA SANTA\n\n"
+#             f"🔴‼️ Equipamento: 2722 (G21 - CLIENTE):\n\n"
+#             f"Valores Atuais: 100.0, 100.0, 100.0, 100.0, 100.0\n"
+#             f"Valores Previstos: 48.0, 48.0, 50.8, 49.1, 49.1\n\n"
+#             f"Alerta: O load speed está em 100%."
+#         ),
+#     },
+# }
+                        
+# payload = {
+#     "number": telefone_formatado,
+#     "options": {
+#         "delay": 1200,
+#         "presence": "composing"
+#     },
+#     "contactMessage": [
+#         {
+#             "fullName": "Contact Name",
+#             "wuid": "559999999999",
+#             "phoneNumber": "+55 99 9 9999-9999",
+#             "organization": "Company Name",
+#             "email": "email",
+#             "url": "url page"
+#         },
+#         {
+#             "fullName": "Contact Name",
+#             "wuid": "559911111111",
+#             "phoneNumber": "+55 99 9 1111-1111",
+#             "organization": "Company Name",
+#             "email": "email",
+#             "url": "url page"
+#         }
+#     ]
+# }
 
 
         # payload = {
@@ -173,66 +242,3 @@ async def main():
         #     }
         # }
         
-        
-        start_chat(payload)
-
-# Executa a função principal assíncrona
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
-
-
-'''
-import requests
-import aiomysql
-
-
-
-async def create_pool():
-    pool = await aiomysql.create_pool(
-        host="192.168.4.50",
-        user="bruno",
-        password="superbancoml",
-        db="machine_learning",
-        minsize=1,
-        maxsize=10
-    )
-    return pool
-
-
-def start_chat(payload):
-    url_base = "http://192.168.15.60:8080"
-
-    url = f"{url_base}/message/sendText/Suporte_BRG"
-
-    try:
-        response = requests.request(
-            "POST",
-            url,
-            json=payload,
-            headers={
-                "apikey": "k3v14ilstiguaumoz8nzt", 
-                "Content-Type": "application/json"
-            }
-        )
-                
-        if response.status_code == 200:
-            data = response.json()
-            print("Mensagem enviada com sucesso:", data)
-        else:
-            print(f"Erro ao enviar mensagem. Código: {response.status_code}, Resposta: {response.text}")
-    
-    except Exception as e:
-        print("Erro ao enviar mensagem:", e)
-
-if __name__ == "__main__":
-    payload = {
-        "number": "5562982957089",
-        "textMessage": {  
-            "text": "Olá, este é um teste de chat." 
-        }
-    }
-    start_chat(payload)
-
-'''

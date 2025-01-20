@@ -4838,6 +4838,295 @@ async def adicionar_DataQuebra_FG(pool):  # Função para passar data_cadastro_q
 
 
 
+############################################### inicio do LLM ########################################################################################################
+
+import os
+import re
+import uuid
+from groq import Groq
+from collections import deque
+from PyPDF2 import PdfReader
+from torch import Tensor  # Isso deve funcionar corretamente se o PyTorch estiver instalado corretamente
+from sentence_transformers import SentenceTransformer
+from chromadb import Client
+from chromadb.config import Settings
+
+
+# Comandos que o bot não pode responder
+blocked_commands = [
+    '/relatorio', 
+    '/menu', 
+    "1 dia",
+    "2 dias",
+    "7 dias",
+    "15 dias",
+    "1 mês"
+    "1_dia",
+    "2_dias",
+    "7_dias",
+    "15_dias",
+    "1_mês",
+    'geral',
+    "CONTROLE DE DEMANDA",
+    "HORARIO DE PONTA",
+    "OPERACAO CONTINUA",
+    "FALTA DE ENERGIA",
+    "Geral",
+    "aggo",
+    "agmg",
+    "AGROGERA",
+    "Digitar código da usina",
+    "Digitar código do equipamento",
+    "Inserir usuario",
+    "Editar usuario ativo",
+    "Editar Usinas cadastradas",
+    "Receber todos os tipos de notificações",
+]
+
+# LLM
+
+client = Client(
+    Settings(
+         persist_directory=r"/home/bruno/documentos/chroma_BRG0_db"   # Bruno mudar
+    )
+)
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    
+    try:
+        reader = PdfReader(pdf_path)
+        for page in reader.pages:
+            text += page.extract_text()
+    except Exception as e:
+        print(f"Erro ao processar o arquivo PDF: {pdf_path}. Detalhes: {e}")
+    return text
+
+def chunks_total(text, max_chunk_size=1024):
+    words = text.split()
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for word in words:
+        current_length += len(word) + 1  # Inclui espaço
+        if current_length > max_chunk_size:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = []
+            current_length = len(word) + 1
+        current_chunk.append(word)
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    
+    return chunks
+
+def split_text_into_chunks(texto_extraido, max_chunk_size=None):
+
+    chunks = []
+    partes = texto_extraido.split("O Código")
+    
+    
+    if partes[0]:
+        chunks.append("O Código" + partes[0])
+
+    
+    for parte in partes[1:]:
+        if max_chunk_size is None:
+            chunks.append("O Código" + parte)
+        else:
+            if len(chunks[-1]) + len(parte) > max_chunk_size:
+                chunks.append("O Código" + parte)
+            else:
+                chunks[-1] += "O Código" + parte
+
+    return chunks
+
+def generate_embeddings(chunks, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+
+    model = SentenceTransformer(model_name)
+
+    embeddings = model.encode(chunks, convert_to_numpy=True)  # Passando diretamente a lista de chunks
+
+    return embeddings
+
+collection_name = "pdf_embeddings_brg"
+
+try:
+    collections = client.list_collections()  # Método que lista todas as coleções
+    if collection_name in collections:
+        client.delete_collection(name=collection_name)
+        print(f"Coleção {collection_name} excluída com sucesso!")
+    else:
+        print(f"Coleção {collection_name} não existia.")
+except Exception as e:
+    print(f"Ocorreu um erro ao tentar excluir a coleção: {e}")
+
+# Agora crie uma nova coleção
+try:
+    collection = client.create_collection(name=collection_name)
+    print(f"Coleção {collection_name} criada com sucesso!")
+except Exception as e:
+    print(f"Erro ao criar a coleção: {e}")
+    
+# Lista de arquivos PDF
+pdf_files = [r"C:\Users\user\Desktop\codigos\LLM\Alarmes e Possíveis Causas.pdf"]
+
+pdf_files = [
+    r"/home/bruno/documentos/Alarmes e Possíveis Causas.pdf"
+    r"/home/bruno/documentos/47704191_BR Elétrico.pdf",
+]
+# Bruno mudar
+
+doc_id = 0
+
+for pdf_file in pdf_files:
+    if os.path.exists(pdf_file):
+        print(f"Processando: {pdf_file}")
+        text = extract_text_from_pdf(pdf_file)
+        if "Alarmes e Possíveis Causas" in pdf_file:
+                print("Fazendo chunk de Alarmes")
+                chunks = split_text_into_chunks(text)
+        elif "47704191_BR Elétrico" in pdf_file:  
+                print("Realizando chunks de BR - Elétrico")
+                chunks = chunks_total(text)
+        else:
+                print("Arquivo não identificado. Usando chunk padrão.")
+                chunks = chunks_total(text) 
+        embeddings = generate_embeddings(chunks)  
+
+        # Adiciona os chunks, embeddings e metadados na coleção
+        for i, chunk in enumerate(chunks):
+            print(i)
+            chunk_id = f"doc{doc_id}_chunk{i}"  # ID único para cada chunk
+            collection.add(
+                embeddings=[embeddings[i]],       # Embedding do chunk
+                documents=[chunk],                # Conteúdo do chunk
+                metadatas=[{"file_name": pdf_file}],  # Metadados com o nome do arquivo
+                ids=[chunk_id]                    # ID único
+            )
+        doc_id += 1
+    else:
+        print(f"Arquivo não encontrado: {pdf_file}")
+
+print("Indexação concluída!")
+
+def query_chroma(query, top_k=5):
+
+    embedding = generate_embeddings([query])
+    results = collection.query(
+        query_embeddings=embedding,
+        n_results=top_k
+    )
+    return results
+
+client_groq = Groq(
+    api_key= "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" # Bruno mudar 
+)
+
+def clean_html(content):
+    # Remove tags não suportadas pelo Telegram
+    content = re.sub(r'<!DOCTYPE html>|<html>|</html>|<head>|</head>|<body>|</body>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<div.*?>|</div>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<span.*?>|</span>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<p>|</p>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<br>|<hr>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<h\d>|</h\d>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<img.?>|<video.?>|<audio.?>|<source.?>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<form.?>|</form>|<input.?>|<textarea.?>|<button.?>|</button>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<script.?>.?</script>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<style.?>.?</style>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<link.*?>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<.*?>', '', content)
+    content = html.unescape(content)  
+    content = re.sub(r'\n+', ' ', content)  
+    content = re.sub(r'\s+', ' ', content).strip()
+    return content
+
+
+historico_perguntas = deque(maxlen=5)
+historico_respostas = deque(maxlen=5)
+
+def query_and_prompt(user_query, top_k=3):
+    historico_perguntas.append(user_query)
+
+    if "ultimas perguntas" in user_query.lower():
+        historico_respostas.append("Exibindo as últimas perguntas feitas pelo usuário.")
+        resposta = "<h3>Últimas perguntas feitas pelo usuário:</h3><ul>"
+        for pergunta in historico_perguntas:
+            resposta += f"<li>{pergunta}</li>"
+        resposta += "</ul>"
+        resposta += '<p>Para mais informações acesse: <a href="http://www.brggeradores.com.br">www.brggeradores.com.br</a></p>'
+        return resposta
+    
+    embedding = generate_embeddings([user_query])
+    results = collection.query(
+        query_embeddings=embedding,
+        n_results=top_k
+    )
+
+    prompt_content = (
+    "Responda em português! Responda de forma completa à pergunta do usuário com base nos documentos. "
+    "Sempre ao final da resposta, indique para mais informações acesse (www.brggeradores.com.br). "
+    "Você é uma assistente de IA da GRID geradores, uma extensão da empresa BRG Geradores. "
+    "Guarde as últimas 5 perguntas feitas pelo usuário para ajudar com perguntas relacionadas no futuro, analisando os documentos. "
+    "Não é necessário mencionar a página do documento usada como referência. "
+    "Entregue como formato HTML. "
+    "Quando ler \uf0b7, significa que é um texto unicode e que existe um símbolo de marcador, como se fossem bolinha de lista: '•' "
+    "Ao dizer Documento 1, diga o nome do PDF que buscou esta informação. "
+    "Em nenhuma hipótese diga Documento 1, documento 2 e documento 3. "
+    "em nenhuma hipótese envie as ultimas perguntas na resposta."
+    "Não enviar historico de perguntas ao usuario, caso ele não peça. "
+    "Envie o historico se usuario perguntar 'últimas perguntas', caso contrario nunca enviar. "
+    "Não é necessário dar uma saudação inicial. ex: Olá! "
+    "Nunca avisar o usuário que está armazenando as perguntas dele. "
+    )
+    
+    for i, doc in enumerate(results['documents'][0]):
+        metadata = results['metadatas'][0][i]
+        prompt_content += f"Documento {i+1} (arquivo: {metadata['file_name']}):\n{doc}\n\n"
+
+    prompt_content += f"Pergunta: {user_query}"
+#    prompt_content = clean_html(prompt_content)
+
+    # Enviar o prompt para o Groq API
+    chat_completion = client_groq.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt_content,
+            }
+        ],
+        model="llama3-70b-8192",  
+    )
+    
+    resposta = chat_completion.choices[0].message.content
+    historico_respostas.append(resposta)
+    clean_html(resposta)
+    return resposta
+
+
+@dp.message_handler(lambda message: message.text.lower() in blocked_commands)
+async def handle_blocked_commands(message: types.Message):
+    await message.reply("Desculpe, não posso responder a isso.")
+
+# Handler para processar perguntas ao LLM
+@dp.message_handler(lambda message: not any(command in message.text.lower() for command in blocked_commands))
+async def handle_text_message(message: types.Message):
+    user_query = message.text
+    user_name = message.from_user.first_name
+    try:
+        response = query_and_prompt(user_query)
+        await message.reply(f"Olá, {user_name}!\n\n{response}", parse_mode='HTML')
+    except Exception as e:
+        await message.reply(f"Ocorreu um erro ao processar sua consulta: {e}")
+        
+
+
+############################################### fim do LLM ########################################################################################################
+
+
+
 async def on_startup(dp):
     dp.pool = await create_pool()
 
@@ -4854,12 +5143,12 @@ async def processar_equipamentos_async(dp):
         cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
     #    cod_campo_especificados = ['3', '114', '21', '76']
         cod_campo_especificados = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77']
-        await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
+    #    await processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool)
     
     #    await check_and_update(dp.pool)
     #    await check_and_update_falhas(dp.pool)
-    #    await adicionar_DataQuebra_FG(dp.pool)
-    
+        await adicionar_DataQuebra_FG(dp.pool)
+
     except asyncio.CancelledError:
         print("Tarefa de processamento de equipamentos cancelada.")
     except Exception as e:

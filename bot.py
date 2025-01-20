@@ -47,7 +47,8 @@ from PIL import Image
 import tempfile
 import re
 import matplotlib.pyplot as plt
-
+from statsmodels.tsa.ar_model import AutoReg
+import numpy as np
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle,FrameBreak, PageBreak
@@ -69,7 +70,8 @@ import aiosmtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-
+from uuid import uuid4
+import difflib
 from aiogram.utils.exceptions import MessageNotModified, MessageToDeleteNotFound
 from asyncio import sleep
 #from PIL import Image
@@ -80,16 +82,14 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 dp.middleware.setup(LoggingMiddleware())
 
-API_KEY = 'AIzaSyDf9hqXZvxOiCKaFSiIa0byrfEctP5mflI'
-genai.configure(api_key=API_KEY)
-
 
 # bot = Bot(token=TOKEN)
 # dp = Dispatcher(bot, storage=MemoryStorage())
 # dp.middleware.setup(LoggingMiddleware())
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)  # Reduzir a verbosidade
 logger = logging.getLogger(__name__)
 
 
@@ -154,6 +154,11 @@ funcionamento_map = {
 reverse_funcionamento_map = {v: k for k, v in funcionamento_map.items()}
 
 
+'''
+
+API_KEY = 'AIzaSyDf9hqXZvxOiCKaFSiIa0byrfEctP5mflI'
+genai.configure(api_key=API_KEY)
+
 # Inicializando os modelos Gemini-Pro e Gemini-Pro Vision
 gemini_model = genai.GenerativeModel('gemini-pro')
 gemini_vision_model = genai.GenerativeModel("gemini-1.5-flash")
@@ -194,6 +199,7 @@ async def handle_messages(message: types.Message):
     except Exception as e:
         await message.answer(f"Ocorreu um erro ao processar sua mensagem: {e}")
 
+'''
 
 async def fetch_alarm_descriptions(pool, alarm_codes):
     async with pool.acquire() as conn:
@@ -687,7 +693,59 @@ async def Corrente_L3 (pool, cod_equipamento, data_previsto, data_cadastro_quebr
 
     return ""
 
+async def Buscar_geracao(nome_usina, period):
+    pool = dp.pool
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    SELECT 
+                        nome_usina,
+                        SUM(energia_kWh) / 1000 AS energia_MWh, 
+                        SUM(consumo_kL) / 1000 AS combustivel_kL, 
+                        AVG(consumo_L_kWh) * 1000 AS Rendimento_especifico_L_MWH 
+                    FROM machine_learning.Geracao_diaria
+                    WHERE nome_usina = %s
+                    AND dia BETWEEN DATE_SUB(CURDATE(), INTERVAL %s DAY) AND CURDATE()
+                    GROUP BY nome_usina;
+                """, (nome_usina, period))
+                resultado = await cursor.fetchone()
+                if resultado:
+                    return resultado
+                else:
+                    print("Erro.")
+                    return None
+    except Exception as e:
+        print(f"Erro para usina: {nome_usina}")
+        print(f"erro em Buscar_geracao: {e}")
 
+async def Buscar_geracao2(usina, nome_equipamento, data):
+    data_formatada = data.strftime('%Y-%m-%d')
+    # print(f"Usina recebida: {usina}")
+    # print(f"Equipamento recebido: {nome_equipamento}")
+    # print(f"Data recebida: {data_formatada}\n")
+    
+    pool = dp.pool
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                    SELECT 
+                        nome_equip,
+                        nome_usina,
+                        SUM(energia_kWh) / 1000 AS energia_MWh, 
+                        SUM(consumo_kL) / 1000 AS combustivel_kL, 
+                        consumo_L_kWh * 1000 AS Rendimento_especifico_L_MWH 
+                    FROM machine_learning.Geracao_diaria
+                    WHERE dia = %s
+                    AND nome_usina = %s
+                    AND nome_equip = %s;
+                """, (data_formatada, usina, nome_equipamento))
+                resultado = await cursor.fetchone()
+                return resultado
+    except Exception as e:
+        print(f"Erro para equipamento {nome_equipamento}: {e}")
+        return None
 
 async def fetch_report_data(pool, period, user_id, funcionamento):
     try:
@@ -800,8 +858,6 @@ async def fetch_report_data(pool, period, user_id, funcionamento):
 
                     # Verificar se o equipamento está em alerta atualmente
                     if cod_equipamento in equipamentos_alerta_set:
-
-#                        if not data_quebra and (not data_previsto_saida_dt or data_previsto_saida_dt >= current_time):
                         if not data_quebra:
                             data_quebra = 'Em operação'
                             tempo_total = 'Em operação'
@@ -1994,45 +2050,125 @@ async def create_pdf(detailed_report, dados_gemini, period, funcionamento, filen
         leftIndent=130  # Aumentado para posicionar mais à direita
     )
 
-    # Variáveis de exemplo para os valores
-    # total_equipamentos_alerta = 50
-    # total_equipamentos_com_data = 40
-    # assertibilidade = 80.5
-
     # Extrair valores do report_summary para uso no PDF
     total_equipamentos_alerta = summary_data["total_equipamentos_alerta"]
     total_equipamentos_com_data = summary_data["total_equipamentos_com_data"]
     assertibilidade = summary_data["assertibilidade"]
     
     
-    # Criar os parágrafos para cada item
-    alerta_paragraph = Paragraph(f"Total de equipamentos previstos: {total_equipamentos_alerta}", total_equipamentos_alerta_equipamentos)
-    assertibilidade_paragraph = Paragraph(f"Assertibilidade: {assertibilidade:.2f}%", assertibilidade_equipamentos)
-    com_data_paragraph = Paragraph(f"Total de equipamentos com falha: {total_equipamentos_com_data}", total_equipamentos_com_data_equipamentos)
+    #Criar os parágrafos para cada item
+    # alerta_paragraph = Paragraph(f"Total de equipamentos previstos: {total_equipamentos_alerta}", total_equipamentos_alerta_equipamentos)
+    # assertibilidade_paragraph = Paragraph(f"Assertibilidade: {assertibilidade:.2f}%", assertibilidade_equipamentos)
+    # com_data_paragraph = Paragraph(f"Total de equipamentos com falha: {total_equipamentos_com_data}", total_equipamentos_com_data_equipamentos)
 
-    # Definir a tabela com os parágrafos organizados nas posições desejadas
-    data = [
-        [alerta_paragraph, assertibilidade_paragraph],  # Primeira linha com alerta e assertibilidade lado a lado
-        [com_data_paragraph]  # Segunda linha com total de equipamentos com data
+    #Definir a tabela com os parágrafos organizados nas posições desejadas
+    # data = [
+    #     [alerta_paragraph, assertibilidade_paragraph],  # Primeira linha com alerta e assertibilidade lado a lado
+    #     [com_data_paragraph]  # Segunda linha com total de equipamentos com data
+    # ]
+
+    #Configurar a tabela
+    # table = Table(data, colWidths=[250, 250])  # Define larguras das colunas
+    # table.setStyle(TableStyle([
+    #     ('ALIGN', (0, 0), (1, 0), 'LEFT'),  # Alinha à esquerda e direita na primeira linha
+    #     ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    #     ('SPAN', (0, 1), (1, 1)),  # Mescla as colunas na segunda linha
+    #     ('ALIGN', (0, 1), (1, 1), 'CENTER'),  # Centraliza total_equipamentos_com_data
+    #     ('TOPPADDING', (0, 0), (-1, -1), 5),  # Adiciona espaçamento
+    #     ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    # ]))
+
+    # # Adicionar a tabela ao fluxo de elementos
+    # elements.append(table)
+    # elements.append(Spacer(1, 12))
+
+    # elements.append(Spacer(1, 12)) 
+
+    # enviar para bruno inicio
+    centralized_style = ParagraphStyle(
+        'CentralizedStyle',
+        parent=period_style,  # Usando o estilo existente como base
+        alignment=1, 
+        leftIndent=10          
+    )   
+    
+    elements.append(Paragraph("Resumo Geral:", centralized_style)) 
+
+    filtered_data = []  # Lista para armazenar os dados filtrados
+    teste = detailed_report.split("<tr>")
+    resumo = {}
+    energia_total = 0
+    combustivel_total = 0
+    rendimento_total = 0
+    
+    for teste1 in teste[1:]:
+        columns = teste1.split("<td>")
+        dados = []
+
+        for i, col in enumerate(columns[1:], start=1):
+            value = col.split("</td>")[0].strip()
+            if i == 1 or i == 2 or i == 3:
+                if i == 3:  
+                    try:
+                        value = datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        value = None  
+                dados.append(value)
+        
+        if len(dados) == 3:  
+            usina, nome_equipamento, data = dados
+
+            geracao = await Buscar_geracao2(usina, nome_equipamento, data)
+
+            if geracao:
+                nome_equip, nome_usina, energia_MWh, combustivel_kL, rendimento_especifico_L_MWh = geracao
+                if energia_MWh is None or combustivel_kL is None or rendimento_especifico_L_MWh is None:
+                    continue
+                chave = f"{nome_equip}-{nome_usina}"
+                if chave not in resumo:
+                    resumo[chave] = {
+                        "nome_equipamento": nome_equipamento,
+                        "nome_usina": usina,
+                        "energia_MWh": 0.0,
+                        "combustivel_kL": 0.0,
+                        "rendimento_especifico_L_MWh": 0.0,
+                        "contador_rendimento": 0  # Para calcular a média
+                    }
+                
+                # quero colocar aqui que caso o resultado venha tudo none, ele desconsiderar e ir par o proximo 
+                resumo[chave]["energia_MWh"] += energia_MWh
+                resumo[chave]["combustivel_kL"] += combustivel_kL
+            else:
+                print(f"Erro ao buscar geração para o equipamento {nome_equipamento} na usina {usina}")
+
+
+            energia_total = sum(item["energia_MWh"] for item in resumo.values())
+            combustivel_total = sum(item["combustivel_kL"] for item in resumo.values())
+            rendimento_total = (
+                            combustivel_total * 1000 / energia_total
+                        )
+
+    table_data = [
+        ["Energia", "Combustível", "Rendimento"],   
+        [f"{energia_total:.2f} MWh", f"{combustivel_total:.2f} kL",  f"{rendimento_total:.2f} L/MWh"]   #
     ]
 
-    # Configurar a tabela
-    table = Table(data, colWidths=[250, 250])  # Define larguras das colunas
+    # Configuração da tabela
+    table = Table(table_data, colWidths=[150, 150, 150])  # Define a largura das colunas
     table.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (1, 0), 'LEFT'),  # Alinha à esquerda e direita na primeira linha
-        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-        ('SPAN', (0, 1), (1, 1)),  # Mescla as colunas na segunda linha
-        ('ALIGN', (0, 1), (1, 1), 'CENTER'),  # Centraliza total_equipamentos_com_data
-        ('TOPPADDING', (0, 0), (-1, -1), 5),  # Adiciona espaçamento
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),           # Centraliza todo o conteúdo
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), # Cabeçalhos em negrito
+        ('FONTSIZE', (0, 0), (-1, -1), 10),              # Tamanho da fonte
+        ('LINEABOVE', (0, 1), (-1, 1), 1, colors.black), # Linha acima dos valores
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.black), # Linha abaixo final
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),          # Espaço no cabeçalho
+        ('TOPPADDING', (0, 1), (-1, 1), 8),              # Espaço no corpo da tabela
     ]))
 
-    # Adicionar a tabela ao fluxo de elementos
+    elements.append(Spacer(1, 12))
     elements.append(table)
     elements.append(Spacer(1, 12))
-
-    elements.append(Spacer(1, 12)) 
-    
+        
     header_style = ParagraphStyle(
         'HeaderStyle',
         parent=styles['Normal'],
@@ -2254,26 +2390,13 @@ async def create_pdf(detailed_report, dados_gemini, period, funcionamento, filen
             nome_equipamento = entry.split("Equipamento: ")[1].split(" - ")[0].strip()
             numero_equipamento = re.search(r'\((\d+)\)', entry).group(1)
 
-            # data_previsto = entry.split("Data previsto: ")[1].split("\n")[0].strip()
-            # data_previsto_saida = entry.split("Data previsto saída: ")[1].split("\n")[0].strip()
-            # data_quebra = entry.split("Data quebra: ")[1].split("\n")[0].strip()
-
             data_previsto = formatar_data(entry.split("Data previsto: ")[1].split("\n")[0].strip())
             data_previsto_saida = formatar_data(entry.split("Data previsto saída: ")[1].split("\n")[0].strip())
             data_quebra = formatar_data(entry.split("Data quebra: ")[1].split("\n")[0].strip())
 
             valores_reais = entry.split("Valores reais: [")[1].split("]")[0].strip().replace('\n', '').replace(' ', '').split(',')
             valores_previstos = entry.split("Valores previstos: [")[1].split("]")[0].strip().replace('\n', '').replace(' ', '').split(',')
-            
-            # nome_usina = entry.split("Usina: ")[1].split("\n")[0].strip() if "Usina: " in entry else "N/A"
-            # nome_equipamento = entry.split("Equipamento: ")[1].split(" - ")[0].strip() if "Equipamento: " in entry else "N/A"
-            # data_previsto = entry.split("Data previsto: ")[1].split("\n")[0].strip() if "Data previsto: " in entry else "N/A"
-            # data_previsto_saida = entry.split("Data previsto saída: ")[1].split("\n")[0].strip() if "Data previsto saída: " in entry else "N/A"
-            # data_quebra = entry.split("Data quebra: ")[1].split("\n")[0].strip() if "Data quebra: " in entry else "N/A"
-            # valores_reais = entry.split("Valores reais: [")[1].split("]")[0].strip().replace('\n', '').replace(' ', '').split(',') if "Valores reais: [" in entry else []
-            # valores_previstos = entry.split("Valores previstos: [")[1].split("]")[0].strip().replace('\n', '').replace(' ', '').split(',') if "Valores previstos: [" in entry else []
-            
-            
+
             tempo_anormalidade = entry.split("Tempo anormalidade: ")[1].split("\n")[0].strip() if "Tempo anormalidade: " in entry else "N/A"
             tempo_total = entry.split("Tempo total: ")[1].split("\n")[0].strip() if "Tempo total: " in entry else "N/A"
             alerta_status = entry.split("Status: ")[1].split("\n")[0].strip() if "Status: " in entry else "N/A"
@@ -2346,9 +2469,28 @@ async def create_pdf(detailed_report, dados_gemini, period, funcionamento, filen
 
 
     elements.append(Spacer(1, 12))
-    for nome_usina, equipamentos in usinas.items():
+    for nome_usina, equipamentos in usinas.items():  # Pedro
         elements.append(PageBreak())
         elements.append(Paragraph(f"Usina: {nome_usina}", ParagraphStyle('Heading1', parent=period_style)))
+        
+        # enviar bruno 
+        geracao = await Buscar_geracao(nome_usina, period)
+
+        if geracao:
+            energia_MWh, combustivel_kL, rendimento_especifico_L_MWh = geracao[1:]  # Ignorar nome_usina
+            energia_MWh = f"<b>Energia:</b> {float(energia_MWh):.2f} MWh"
+            combustivel_kL = f"<b>Combustível:</b> {float(combustivel_kL):.2f} kL"
+            rendimento_especifico_L_MWh = f"<b>Rendimento:</b> {float(rendimento_especifico_L_MWh):.2f} L/MWh"
+        else:
+            #print("Teste4444")
+            energia_MWh = "Energia: Dados não disponíveis"
+            combustivel_kL = "Combustível: Dados não disponíveis"
+            rendimento_especifico_L_MWh = "Rendimento: Dados não disponíveis"
+
+        elements.append(Paragraph(energia_MWh, styleN_left_indent))
+        elements.append(Paragraph(combustivel_kL, styleN_left_indent))
+        elements.append(Paragraph(rendimento_especifico_L_MWh, styleN_left_indent))
+
         elements.append(Spacer(1, 12))
 
         for equipamento in equipamentos:
@@ -2526,10 +2668,9 @@ async def create_pdf(detailed_report, dados_gemini, period, funcionamento, filen
                         elements.append(Spacer(1, 12))  # Adiciona um espaçamento entre causas/soluções
                         alarmes_adicionados.add(item["alarme"])
 
-            elements.append(Spacer(1, 12))  # Adiciona um espaçamento entre equipamentos
-
             sequencias = detectar_sequencia(equipamento["alarmes_text"])
             if sequencias:
+                elements.append(Spacer(1, 12))  # Adiciona um espaçamento entre equipamentos
                 elements.append(Paragraph('<b>Sequências de alarmes:</b>', styleN_left_indent))
                 elements.append(Spacer(1, 12))  # Adiciona um espaçamento entre seções
                 for base_nome, numeros in sequencias:
@@ -3030,6 +3171,1550 @@ async def criar_tabela_usinas_usuario(pool):
 
 
 
+############################################### inicio do LLM ########################################################################################################
+
+import uuid
+from groq import Groq
+from collections import deque
+from PyPDF2 import PdfReader
+from sentence_transformers import SentenceTransformer
+from chromadb import Client
+from chromadb.config import Settings
+from fastapi import FastAPI, Request
+import requests
+from uvicorn import Config, Server
+import chromadb
+import torch
+import base64
+
+import magic
+import aiohttp
+
+
+# Obter a hora atual
+hora_atual = datetime.now().hour
+
+# Determinar o período do dia
+if 5 <= hora_atual < 12:
+    periodo_do_dia = "Bom%20dia"
+elif 12 <= hora_atual < 18:
+    periodo_do_dia = "Boa%20tarde"
+else:
+    periodo_do_dia = "Boa%20noite"
+
+app = FastAPI()
+
+# Comandos que o bot não pode responder
+blocked_commands = [
+    '*.com*',  # Bloqueia qualquer texto que contenha ".com"
+    '*.net*',  # Bloqueia qualquer texto que contenha ".net"
+    '*gmail*',     # Bloqueia qualquer texto que contenha "gmail", como emails    
+    '*hotmail*',     # Bloqueia qualquer texto que contenha "hotmail", como emails    
+    '/start',
+    '/geradores',
+    '/relatorio', 
+    '/menu', 
+    "1 dia",
+    "2 dias",
+    "7 dias",
+    "15 dias",
+    "1 mês"
+    "1_dia",
+    "2_dias",
+    "7_dias",
+    "15_dias",
+    "1_mês",
+    'geral',
+    "CONTROLE DE DEMANDA",
+    "HORARIO DE PONTA",
+    "OPERACAO CONTINUA",
+    "FALTA DE ENERGIA",
+    "Geral",
+    "aggo",
+    "agmg",
+    "AGROGERA",
+    "Digitar código da usina",
+    "Digitar código do equipamento",
+    "Inserir usuario",
+    "Editar usuario ativo",
+    "Editar Usinas cadastradas",
+    "Receber todos os tipos de notificações",
+]
+
+# LLM
+pasta_LLM = "/home/bruno/documentos/chroma_llm"
+
+if not os.path.exists(pasta_LLM):
+    os.makedirs(pasta_LLM)
+    print(f"Diretório criado: {pasta_LLM}")
+else:
+    print(f"Diretório de persistência já existe: {pasta_LLM}")
+
+if pasta_LLM is None:
+    raise ValueError('STORAGE_PATH não definida')
+
+
+client = chromadb.PersistentClient(path=pasta_LLM)
+
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    
+    try:
+        reader = PdfReader(pdf_path)
+        for page in reader.pages:
+            text += page.extract_text()
+    except Exception as e:
+        print(f"Erro ao processar o arquivo PDF: {pdf_path}. Detalhes: {e}")
+    return text
+
+def chunks_total(text, max_chunk_size=1024):
+    words = text.split()
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for word in words:
+        current_length += len(word) + 1  # Inclui espaço
+        if current_length > max_chunk_size:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = []
+            current_length = len(word) + 1
+        current_chunk.append(word)
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    
+    return chunks
+
+def chunks_md(texto_extraido, max_chunk_size=None):
+    chunks = []
+    partes = texto_extraido.split("Página ")
+
+    chunk_atual = ""
+    paginas_em_lote = [] 
+    
+    for parte in partes:
+        if not parte.strip():  
+            continue
+        
+        pagina_texto = "Página " + parte.strip()
+        paginas_em_lote.append(pagina_texto)  
+        
+        if len(paginas_em_lote) == 2:  
+            texto_duas_paginas = "\n".join(paginas_em_lote)
+            paginas_em_lote = []  
+            
+            if max_chunk_size is None:
+                chunks.append(texto_duas_paginas)
+            else:
+                if len(chunk_atual) + len(texto_duas_paginas) <= max_chunk_size:
+                    chunk_atual += texto_duas_paginas + "\n"
+                else:
+                    if chunk_atual.strip():
+                        chunks.append(chunk_atual.strip())
+                    chunk_atual = texto_duas_paginas + "\n"
+    if paginas_em_lote:
+        texto_restante = "\n".join(paginas_em_lote)
+        if chunk_atual.strip():
+            chunk_atual += texto_restante
+        else:
+            chunk_atual = texto_restante
+    if chunk_atual.strip():
+        chunks.append(chunk_atual.strip())
+    
+    return chunks
+
+def chunks_markdown(texto_extraido, max_chunk_size=None):
+    chunks = []
+    partes = re.split(r'^(## .*)', texto_extraido, flags=re.MULTILINE)
+    
+    chunk_atual = ""
+    
+    for i in range(1, len(partes), 2):  # Começar em 1 para pegar apenas os textos, ignorando os cabeçalhos
+        titulo = partes[i].strip()  # Cabeçalho
+        texto = partes[i+1].strip()  # Conteúdo após o cabeçalho
+        
+        # Formata a seção
+        texto_completo = f"{titulo}\n{texto}"
+        
+        # Verifica se o tamanho máximo do chunk foi atingido
+        if max_chunk_size is None:
+            chunks.append(texto_completo)
+        else:
+            if len(chunk_atual) + len(texto_completo) <= max_chunk_size:
+                chunk_atual += texto_completo + "\n"
+            else:
+                if chunk_atual.strip():
+                    chunks.append(chunk_atual.strip())
+                chunk_atual = texto_completo + "\n"
+    
+    # Adiciona o último chunk, se houver
+    if chunk_atual.strip():
+        chunks.append(chunk_atual.strip())
+    
+    return chunks
+
+def split_text_into_chunks(texto_extraido, max_chunk_size=None):
+
+    chunks = []
+    partes = texto_extraido.split("O Código")
+    
+    
+    if partes[0]:
+        chunks.append("O Código" + partes[0])
+
+    
+    for parte in partes[1:]:
+        if max_chunk_size is None:
+            chunks.append("O Código" + parte)
+        else:
+            if len(chunks[-1]) + len(parte) > max_chunk_size:
+                chunks.append("O Código" + parte)
+            else:
+                chunks[-1] += "O Código" + parte
+
+    return chunks
+
+
+def generate_embeddings(chunks, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+
+    model = SentenceTransformer(model_name)
+
+    embeddings = model.encode(chunks, convert_to_numpy=True)  # Passando diretamente a lista de chunks
+
+    return embeddings
+
+collection_name = "LLM_brg"
+
+try:
+    collections = [col.name for col in client.list_collections()]
+    print(f"Coleções existentes: {collections}")
+    if collection_name in collections:
+        print(f"Coleção {collection_name} já existe. Usando a coleção existente.")
+        collection = client.get_collection(name=collection_name)
+    else:
+        print(f"Coleção {collection_name} não encontrada. Criando uma nova coleção.")
+        collection = client.create_collection(name=collection_name)
+        print(f"Coleção {collection_name} criada com sucesso!")
+
+except Exception as e:
+    print(f"Ocorreu um erro ao acessar ou criar a coleção: {e}")
+
+
+
+# Lista de arquivos PDF
+
+# pdf_files = [
+#     r"/home/bruno/documentos/Apostila 2  - markdown.pdf",
+#     r"/home/bruno/documentos/Apostila 3 - Gerado.pdf",
+#     r"/home/bruno/documentos/Apostila 6 - Gerado.pdf",
+#     r"/home/bruno/documentos/Alarmes e Possíveis Causas.pdf",
+#     r"/home/bruno/documentos/47704191_BR Elétrico.pdf",
+#     r"/home/bruno/documentos/Alarmes do motor.pdf",
+# ]
+
+
+pdf_files = [
+#    r"/home/bruno/documentos_docling/Lista de Alarmes e Possíveis Causas.md",
+     r"/home/bruno/documentos/Alarmes e Possíveis Causas.pdf",
+    r"/home/bruno/documentos_docling/Parâmetros de Operação e Diagnóstico de Falhas.md",
+    r"/home/bruno/documentos_docling/Manual de manutenção e instalação - geradores a diesel BRG.md",
+    r"/home/bruno/documentos_docling/Manual de Operação - Geradores - COM  CGC 400.md",
+    r"/home/bruno/documentos_docling/Manual de Operação - Geradores - COM AGC 150.md",
+    r"/home/bruno/documentos_docling/47704191_BR Elétrico.md",
+    r"/home/bruno/documentos_docling/Alarmes do motor.md",
+    r"/home/bruno/documentos_docling/Apostila 3 - OK.md",
+    # r"/home/bruno/documentos_docling/Apostila 5 - normal.md",
+    # r"/home/bruno/documentos_docling/Apostila 6 - Gerado.md",
+]
+
+doc_id = 0
+
+
+for pdf_file in pdf_files:
+    if os.path.exists(pdf_file):
+        try:
+            # Verificar se o arquivo é PDF
+            if pdf_file.endswith('.pdf'):
+                print(f"Processando PDF: {pdf_file}")
+                existing_metadata = collection.get(where={"file_name": pdf_file})
+                
+                if existing_metadata["ids"]:
+                    print(f"Arquivo {pdf_file} já está na coleção. Recuperando embeddings existentes.")
+                    continue
+                else:
+                    text = extract_text_from_pdf(pdf_file)
+                    if "Alarmes e Possíveis Causas" in pdf_file:
+                        print("Fazendo chunk de Alarmes")
+                        chunks = split_text_into_chunks(text)
+                    elif "Gerado" in pdf_file:
+                        print("Realizando chunks dos arquivos markdown")
+                        chunks = chunks_md(text)
+                    else:
+                        print("Usando chunk padrão.")
+                        chunks = chunks_total(text) 
+            
+            # Verificar se o arquivo é Markdown
+            elif pdf_file.endswith('.md'):
+                print(f"Processando Markdown: {pdf_file}")
+                existing_metadata = collection.get(where={"file_name": pdf_file})
+                
+                if existing_metadata["ids"]:
+                    print(f"Arquivo {pdf_file} já está na coleção. Recuperando embeddings existentes.")
+                    continue
+                else:
+                    with open(pdf_file, 'r', encoding='utf-8') as md_file:
+                        text = md_file.read()
+                    chunks = chunks_markdown(text) 
+                     
+            # Gerar embeddings para os chunks
+            embeddings = generate_embeddings(chunks)
+
+            # Adicionar os embeddings ao banco de dados
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{os.path.basename(pdf_file)}_chunk{i}_{uuid4().hex}"
+                
+                collection.add(
+                    embeddings=[embeddings[i]],
+                    documents=[chunk],
+                    metadatas=[{"file_name": pdf_file}],
+                    ids=[chunk_id]
+                )   
+            
+            doc_id += 1
+
+        except Exception as e:
+            print(f"Erro ao processar o arquivo {pdf_file}: {e}")
+
+    else:
+        print(f"Arquivo não encontrado: {pdf_file}")
+
+print("Indexação concluída!")
+
+
+
+client_groq = Groq(
+    api_key= "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"
+)
+
+def clean_html(content):
+    # Remove tags não suportadas pelo Telegram
+    content = re.sub(r'<!DOCTYPE html>|<html>|</html>|<head>|</head>|<body>|</body>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<div.*?>|</div>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<span.*?>|</span>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<p>|</p>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<br>|<hr>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<h\d>|</h\d>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<img.?>|<video.?>|<audio.?>|<source.?>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<form.?>|</form>|<input.?>|<textarea.?>|<button.?>|</button>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<script.?>.?</script>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<style.?>.?</style>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<link.*?>', '', content, flags=re.IGNORECASE)
+    content = re.sub(r'<.*?>', '', content)
+    content = html.unescape(content)  
+    content = re.sub(r'\n+', ' ', content)  
+    content = re.sub(r'\s+', ' ', content).strip()
+    return content
+
+async def Buscar_pergunta_LLM_bot(user_query, similarity_threshold=0.82):
+    pool = dp.pool
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            query = """
+                SELECT pergunta_user, resposta_bot
+                FROM machine_learning.LLM_Bot
+                WHERE avaliacao = 5
+            """
+            await cursor.execute(query)  
+            results = await cursor.fetchall() 
+
+            similar_responses = []
+            
+            for row in results:
+                pergunta_user, resposta_bot = row
+                
+                if user_query.lower() in pergunta_user.lower():
+                    print("\nRetornando a exata resposta do banco\n")
+                    return resposta_bot
+                else:
+                    similarity = difflib.SequenceMatcher(None, user_query.lower(), pergunta_user.lower()).ratio()
+                    if similarity > similarity_threshold:
+                        print(f"\nA similaridade achada entre as frases foi de: {similarity}\n")
+                        similar_responses.append(resposta_bot)
+
+    if similar_responses:
+        prompt_similaridade = (
+            f"""Você é um assistente virtual da BRG Brasil Geradores, responsável por juntar respostas completas e precisas. 
+            Seu objetivo é combinar as frases fornecidas, todas consideradas corretas (nota 5), em uma única resposta clara e curta. 
+            Apenas utilize as respostas fornecidas para elaborar a resposta final, garantindo que ela seja direta, objetiva e bem estruturada. 
+            Evite incluir introduções como 'Aqui está a resposta:' ou qualquer comentário adicional antes da resposta. 
+            Certifique-se de revisar a sintaxe e a pontuação para garantir a melhor qualidade. 
+            Mesmo que a resposta no banco tenha acento ou virgula, confira para que não fique mau formatado nossa resposta final. 
+            A pergunta do usuário foi: {user_query}. 
+            Baseando-se nas respostas disponíveis, elabore uma resposta que atenda diretamente à pergunta do usuário. 
+            Respostas disponíveis do banco de dados: {similar_responses}.
+            """
+        )
+
+        try:
+            similaridade = client_groq.chat.completions.create(
+                messages=[{"role": "user", "content": prompt_similaridade}],
+                model="llama3-70b-8192",
+            )
+            return similaridade.choices[0].message.content
+        except Exception as e:
+            print(f"Erro ao acessar a API Groq: {e}")
+            return None
+    else:
+        print("Sem perguntas similares")
+        return None
+
+
+historico_perguntas = deque(maxlen=5)
+historico_respostas = deque(maxlen=5)
+
+
+async def query_and_prompt(user_query, top_k=3, is_callback=False):
+
+    if not is_callback:
+        Resposta_db = await Buscar_pergunta_LLM_bot(user_query)
+        if Resposta_db:
+            return Resposta_db
+
+    historico_perguntas.append(user_query)
+
+    embedding = generate_embeddings([user_query])
+    results = collection.query(
+        query_embeddings=embedding,
+        n_results=top_k
+    )
+
+    # prompt_content = (
+    # "Responda em português! Responda de forma curta, clara e informativa à pergunta do usuário com base nos documentos. "
+    # "Você é uma assistente de IA da GRID geradores, uma extensão da empresa BRG Geradores. "
+    # "Não é necessário mencionar a página do documento usada como referência. "
+    # "Em nenhuma hipótese diga Documento 1, documento 2 e documento 3. "
+    # "Não de o nome e nem o caminho do arquivo"
+    # "em nenhuma hipótese envie as ultimas perguntas na resposta."
+    # "Não enviar historico de perguntas ao usuario, caso ele não peça. "
+    # "Envie o historico se usuario perguntar 'últimas perguntas', caso contrario nunca enviar. "
+    # "Não é necessário dar uma saudação inicial. ex: Olá! "
+    # "Nunca avisar o usuário que está armazenando as perguntas dele. "
+    # "Sempre feche as tags do html, verifique a resposta entregue as tags fechadas corretamente"
+    # "Se a pessoa pedir a localização da BRG geradores, a localização é: https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9"
+    # "Se a pessoa pedir a localização da GRID geradores, a localização é: https://maps.app.goo.gl/Pssputwd5syeTdw16"
+    # "Se a pessoa pedir a localização da SDO, a localização é: https://maps.app.goo.gl/FRrhnBG9f6HdhChf7"
+
+    # "Sempre envie respostas curtas para o usuário. "
+    # "Tudo que começa com TWD, TAD, DC, D8, são motores de geradores da BRG Geradores. "
+    # "Evitar motores marítimos e focar nos motores industriais."
+    # )
+
+    prompt_content = (
+        "Responda em português! Responda de forma curta, clara e informativa à pergunta do usuário com base nos documentos. "
+        "Caso o usuário pergunte um valor, verifique se há o valor e forneça o valor solicitado junto com a unidade ou grandeza associada. "
+        "Por exemplo, se o valor for uma pressão, inclua a unidade como 'bar' ou 'kPa'. Certifique-se de identificar corretamente a grandeza com base no contexto. "
+        "Responda em HTML, utilizando sempre as seguintes tags para formatar a resposta:"
+            "<b>negrito</b>, <strong>negrito</strong>, <i>itálico</i>, <em>itálico</em>, "
+            "<u>sublinhado</u>, <ins>sublinhado</ins>, <s>tachado</s>, <strike>tachado</strike>, <del>tachado</del>, "
+            "<span class='tg-spoiler'>spoiler</span>, <tg-spoiler>spoiler</tg-spoiler>, "
+            "<a href='URL'>link mascarado</a>, <code>código embutido</code>, <pre>bloco de código</pre>. "
+        "Nao use qualquer outra formatação fora dessas tags. "
+        "Sempre envie as respostas formatadas com HTML para garantir a clareza e a consistência."
+        "Se o usuário não perguntar algo do documento, responda de forma natural com os dados que tem. Não invente respostas, apenas entregue o que tem, caso haja relação. Se não houver, diga que não sabe.\n"
+        "Se tiver causa ou soluçao, entregue ao usuario"
+        """Se a pessoa pedir a localização de:
+            - BRG Geradores, a localização é: <a href='https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9'>BRG Geradores</a>\n
+            - GRID Geradores, a localização é: <a href='https://maps.app.goo.gl/Pssputwd5syeTdw16'>GRID Geradores</a>\n
+            - SDO, a localização é: <a href='https://maps.app.goo.gl/FRrhnBG9f6HdhChf7'>SDO business</a>\n
+        """
+        "Sempre envie respostas curtas para o usuário. "
+        "Tudo que começa com TWD, TAD, DC, D8 são motores de geradores da BRG Geradores. "
+        "Evite motores marítimos e foque nos motores industriais.\n"
+        "Não forneça o nome e nem o caminho do arquivo."
+        f"Utilize o {periodo_do_dia} para saber o período atual.\n"
+        f"""Se perceber que a pessoa está indo para o caminho de querer falar com alguém, pergunte de qual região está falando. Para as seguintes regiões, envie os números formatados como links:
+            - Se for <b>entorno de Goiânia-Goiás</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>João Victor Lião</a>.
+            - Se for <b>Goiânia-Goiás</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Vitor</a>.
+            - Se for <b>Sul do Brasil</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>João Victor Lião</a>.
+            - Se for <b>Sudeste do Brasil</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Sérgio Mota</a>.
+            - Se for <b>Nordeste do Brasil</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562999735481&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Otávio A. Curado</a>.
+            - Se for <b>Norte do Brasil</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Otávio A. Curado</a>.
+            - Se for <b>Mato Grosso</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Otávio A. Curado</a>.
+            - Se for <b>Mato Grosso do Sul</b>, o representante é <a href='https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Otávio A. Curado</a>.
+            - Se não for nenhuma das regiões acima, o representante é <a href='https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}tudo%20bem%3F%20e%20eu%20gostaria%20de%20solicitar%20um%20servi%C3%A7o%20de%20voc%C3%AAs'>Vitor</a>.
+            caso a pessoa peça apenas o telefone do representante e voce ja mandou o link do representante, envie o numero de acordo:
+                - Vitor: +55 (62) 9 8213-4286
+                - João Victor Lião: +55 (62) 9 9904-3154
+                - Sérgio Mota: +55 (62) 9 8117-1423
+                - Otávio A. Curado: +55 (62) 9 8117-1407
+        """
+        "Formate a mensagem antes de enviar, de espaços e pule linhas para ficar mais compreensível"        
+    )
+
+
+    if historico_perguntas:
+        prompt_content += "Histórico de perguntas recentes do usuário:\n"
+        for idx, pergunta in enumerate(historico_perguntas, 1):
+            prompt_content += f"{idx}. {pergunta}\n"
+        prompt_content += "\n"
+
+    for i, doc in enumerate(results['documents'][0]):
+        metadata = results['metadatas'][0][i]
+        prompt_content += f"Documento {i+1} (arquivo: {metadata['file_name']}):\n{doc}\n\n"
+
+    prompt_content += f"Pergunta: {user_query}"
+#    prompt_content = clean_html(prompt_content)
+
+    # Enviar o prompt para o Groq API
+    chat_completion = client_groq.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt_content,
+            }
+        ],
+        model="llama3-70b-8192",  
+    )
+    
+    resposta = chat_completion.choices[0].message.content
+    historico_respostas.append(resposta)
+    return resposta
+
+
+
+
+async def encode_image(image_path):
+    with open(image_path, "rb") as img_file:
+        img_data = img_file.read()
+        return base64.b64encode(img_data).decode("utf-8")
+
+
+async def descrever_imagem(image_path, image_caption):
+
+    if image_caption != "Nenhuma legenda fornecida.":
+        print("Usuario enviou legenda")
+        prompt_text = ( 
+            f"Você é uma IA especializada na análise de imagens relacionadas a Geradores, motores e produtos da BRG Geradores. "
+            f"A pergunta fornecida pelo usuário é: {image_caption}. "
+            "Sua tarefa é apenas descrever a imagem de forma breve e clara, e repetir a pergunta feita pelo usuário, sem tentar respondê-la. "
+            "para facilitar a sua descrição retire os textos da imagem para entender melhor o que esta acontecendo(caso tenha)"
+            f"Use a {image_caption} que é a pergunta do usuario para ao descrever buscar algo relacionado o que o usuario está perguntando" 
+            "Sua resposta deve conter apenas duas partes: "
+            "1. Uma breve descrição da imagem, iniciando com: 'A imagem que o usuário enviou diz sobre: [sua descrição aqui]'. "
+            f"2. A pergunta do usuario: '\nA pergunta em relação à descrição da imagem é: [{image_caption}]'. "
+            "Não responda a pergunta, apenas forneça a descrição e repita a pergunta. "
+            "Evite adicionar outros comentários ou respostas, apenas descreva a imagem e repasse pergunta do usúario. " 
+            "Procure os textos dos alarmes caso veja a tela de um controlador. "
+        )
+        
+    base64_image = await encode_image(image_path)
+    
+    client = Groq(
+        api_key="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"
+    )
+    
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}",
+                        },
+                    },
+                ],
+            }
+        ],
+        max_tokens=300, 
+        model="llama-3.2-90b-vision-preview",   # llama-3.2-11b-vision-preview     
+    )
+    
+    pergunta_LLM = chat_completion.choices[0].message.content 
+    print(f"A pergunta feita pela API foi:\n{pergunta_LLM}")
+    is_callback = True
+    resposta_bot_image = await query_and_prompt_whatsapp(pergunta_LLM, top_k=3,is_callback=is_callback)
+    return pergunta_LLM, resposta_bot_image
+
+
+
+ultima_msg = {}
+user_data = {}
+@dp.message_handler(lambda message: not any(command in message.text.lower() for command in blocked_commands))
+async def handle_text_message(message: types.Message):
+    
+    
+    if ultima_msg.get(message.from_user.id, 2) == 1:
+        print(f"A última mensagem do usuário {message.from_user.id} foi uma foto.")
+        ultima_msg[message.from_user.id] = 0
+        print(f"Agora, o usuário {message.from_user.id} enviou um texto.")
+
+        image_caption = message.text
+        image_path = os.path.join("/home/bruno/imagens/", f"imagem_temporaria.jpg") 
+
+        pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
+
+        await message.reply(
+            f"{resposta_bot_image}", 
+            parse_mode='Markdown'
+        )
+        
+        os.remove(image_path)
+        print("imagem apagada da pasta")
+        return
+    
+    pool = dp.pool
+    user_query = message.text 
+    if message.from_user.full_name:
+        user_name = message.from_user.full_name
+    else:
+        user_name = message.from_user.first_name
+
+    user_id = message.from_user.id
+
+    usuarios_sem_acesso = {}
+    
+    try:
+        # async with pool.acquire() as conn:
+        #     async with conn.cursor() as cursor:
+        #         # Verifica se o id_telegram existe na tabela
+        #         await cursor.execute("""
+        #             SELECT usuario
+        #             FROM usuarios_telegram
+        #             WHERE id_telegram = %s
+        #         """, (user_id,))
+        #         result = await cursor.fetchone()
+
+        # if result is not None:
+        #     # ID do Telegram encontrado; verificar se o usuário é 0
+        #     usuario_value = result[0]
+        #     if usuario_value == 0:
+        #         # Envia boas-vindas e registra no log de sem acesso
+        #         await enviar_boas_vindas(message)
+        #         usuarios_sem_acesso[user_id] = user_name
+        #         print(f"Usuário {user_name} (ID: {user_id}) está cadastrado, mas com acesso restrito (usuário = 0).")
+        #         return
+        # else:
+        #     # ID do Telegram não encontrado; registrar como sem acesso
+        #     await enviar_boas_vindas(message)
+        #     usuarios_sem_acesso[user_id] = user_name
+        #     print(f"Usuário {user_name} (ID: {user_id}) não está cadastrado.")
+        #     return
+
+        # # Caso o usuário tenha acesso, prossiga normalmente
+        # print(f"Usuário {user_name} (ID: {user_id}) tem acesso liberado.")
+
+
+        print("Iniciando a inserção de pergunta e resposta na tabela LLM_Bot.")
+        if message.reply_to_message:
+
+            previous_question = message.reply_to_message.text 
+            user_query = f"A pergunta anterior foi: '{previous_question}'. \nAgora, o usuário está perguntando sobre o assunto: '{user_query}'."
+            is_callback = True
+        else:
+            is_callback = False 
+            user_query = message.text
+
+        try:                
+            response = await query_and_prompt_whatsapp(user_query, top_k=3,is_callback=is_callback, id_user=user_id) 
+
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                    INSERT INTO machine_learning.LLM_Bot (nome_user, pergunta_user, resposta_bot)
+                    VALUES (%s, %s, %s)
+                    """, (user_name, user_query, response))
+                    await conn.commit()
+                    print(f"Inserido pergunta e resposta para usuario {user_name}")
+        except Exception as e:
+            print(f"Erro no banco: {e}")
+
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        user_data[user_id][message.message_id] = {
+            'user_query': user_query,
+            'response': response
+        }
+        rating_markup = InlineKeyboardMarkup(row_width=5)
+        rating_markup.add(*[InlineKeyboardButton(f"⭐ {i}", callback_data=f"rating_{i}_{message.message_id}") for i in range(1, 6)])
+        
+        await message.reply(f"{response}", parse_mode='Markdown', reply_markup=rating_markup)   
+    except Exception as e:
+        print(f"Ocorreu um erro ao processar sua consulta: {e}")
+
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith("rating_"))
+async def handle_rating(callback_query: types.CallbackQuery):
+    pool = dp.pool
+    data_parts = callback_query.data.split("_")
+    rating = int(data_parts[1])
+    message_id = int(data_parts[2]) 
+    user_name = callback_query.from_user.full_name
+    user_id = callback_query.from_user.id
+
+    message_data = user_data.get(user_id, {}).get(message_id)
+    
+    if not message_data:
+        await callback_query.answer("Dados não encontrados. Tente novamente.", show_alert=True)
+        return
+    
+    pergunta = message_data['user_query']  
+    resposta_bot = message_data['response']
+    
+    new_text = (
+        f"{callback_query.message.text}\n\n\n"
+        f"{user_name}, Obrigado por sua avaliação de {rating} estrela{'s' if rating > 1 else ''}!"
+    )
+
+    # print('Iniciando a inserção de avaliação na tabela LLM_Bot.')
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute("""
+                UPDATE machine_learning.LLM_Bot
+                SET avaliacao = %s
+                WHERE nome_user = %s
+                AND pergunta_user = %s
+                AND resposta_bot = %s
+                """, (rating, user_name, pergunta, resposta_bot))
+                
+                await conn.commit()
+                #print(f"Inserido avaliação {rating} para pergunta {pergunta}")
+    except Exception as e:
+        print(f"Erro ao tentar inserir no banco: {e}")
+                
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup=None)  
+        await callback_query.message.edit_text(
+            text=new_text,
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(e)
+
+
+@dp.message_handler(content_types=types.ContentType.PHOTO)
+async def handle_image(message: types.Message):
+    
+    user_id = message.from_user.id
+    if message.from_user.full_name:
+        user_name = message.from_user.full_name
+    else:
+        user_name = message.from_user.first_name
+    
+    image_caption = message.caption if message.caption else "Nenhuma legenda fornecida."
+    if image_caption == "Nenhuma legenda fornecida.":
+        # se não tiver legenda, é pq a proxima msg é uma pergunta 
+        ultima_msg[message.from_user.id] = 1  # Indica que a última mensagem foi uma foto  
+        print(f"Usuário {message.from_user.id} enviou uma foto.") 
+
+        file_id = message.photo[-1].file_id  # melhor jeito para pegar uma resolução melhor da foto 
+        file = await bot.get_file(file_id)
+
+        image_path = os.path.join("/home/bruno/imagens", "imagem_temporaria.jpg")
+        print("imagem salva.")
+        await bot.download_file(file.file_path, image_path) 
+        
+        await message.reply("Para uma análise mais eficiente da imagem, envie uma dúvida ou observação na legenda da foto.\n", parse_mode='Markdown')
+    else:
+        # se tiver legenda a LLM responde sozinha 
+        # ai o proximo msg pode ser uma pergunta para a LLM
+        file_id = message.photo[-1].file_id  # melhor jeito para pegar uma resolução melhor da foto 
+        file = await bot.get_file(file_id)
+
+        image_path = os.path.join("/home/bruno/imagens", "imagem_temporaria.jpg")
+
+        print("imagem salva.")
+        try:
+            await bot.download_file(file.file_path, image_path) 
+            
+            pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
+            
+            await message.reply(
+                f"{resposta_bot_image}", 
+                parse_mode='Markdown'
+            )
+            
+            os.remove(image_path)
+            print("imagem apagada da pasta")
+        except Exception as e:
+            print(f"Erro: {e}\n")
+            os.remove(image_path)
+            print("imagem apagada da pasta")
+
+@dp.message_handler(content_types=types.ContentType.VOICE)
+async def audio_for_text(message: types.Message): 
+   
+    if message.from_user.full_name:
+        user_name = message.from_user.full_name
+    else:
+        user_name = message.from_user.first_name
+
+    id_user = message.from_user.id
+
+    try:
+        file_id = message.voice.file_id
+        file = await dp.bot.get_file(file_id)
+
+        voice_path = os.path.join("/home/bruno/imagens", "audio_temporario.ogg")
+
+        await dp.bot.download_file(file.file_path, voice_path)
+
+        client = Groq(
+            api_key="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"
+        )
+
+        with open(voice_path, "rb") as f:
+            texto_extraido = client.audio.transcriptions.create(
+                file=("audio_temporario.ogg", f.read()), 
+                model="whisper-large-v3-turbo",   
+
+                prompt=(
+                    "Você é uma IA que transcreve áudios em Português do Brasil . "
+                    "Você trabalha para BRG Geradores, GRID Geradores e SDO Business. "
+                    "Técnicos de manutenção e diretores da empresa irão enviar áudios para você, transcreva fielmente o que é dito nos áudios. "
+                    "Alguns alarmes de geradores e controladores são em inglês, não traduza, apenas transcreva. "
+                    "Para palavras em inglês formate em negrito, para a proxima LLM entender onde buscar a resposta. "
+                    "Não invente, caso não consiga escutar corretamente não transcreva nada. "
+                    "Tudo que começa com TWD, TAD, DC, D8 são motores de geradores da BRG Geradores. "
+                    "Caso não consiga transcrever nada envie:'[Pergunta do usuário não foi possível transcrever, peça que envie um audio com melhor qualidade.]'"
+                ),  
+                response_format="text",  
+                language="pt", 
+                temperature=0.0
+            )
+            print(texto_extraido) 
+
+        is_callback = True
+        response = await query_and_prompt_whatsapp(texto_extraido, top_k=3, is_callback=is_callback, id_user=id_user)
+        pool = dp.pool
+
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute("""
+                    INSERT INTO machine_learning.LLM_Bot (nome_user, pergunta_user, resposta_bot)
+                    VALUES (%s, %s, %s)
+                    """, (user_name, texto_extraido, response))
+                    await conn.commit()
+                    #print(f"Inserido pergunta e resposta para usuario {user_name} no wpp")
+        except Exception as e:
+            print(f"Erro no banco: {e}")
+
+        await message.reply(f"{response}", parse_mode="Markdown") 
+
+    except Exception as e:
+        print(f"Erro durante a transcrição: {e}")
+        await message.reply("Desculpe, encontrei um erro ao transcrever o áudio.")
+  
+    finally:
+        if os.path.exists(voice_path):
+            os.remove(voice_path)
+
+
+
+
+historico_respostas = {}
+historico_perguntas = {}
+
+async def query_and_prompt_whatsapp(user_query, top_k=3, is_callback=False, id_user=None):
+    
+    if not is_callback:
+        Resposta_db = await Buscar_pergunta_LLM_bot(user_query)
+        if Resposta_db:
+            return Resposta_db
+
+    embedding = generate_embeddings([user_query])
+    results = collection.query(
+        query_embeddings=embedding,
+        n_results=top_k
+    )
+
+    prompt = (
+        f'''
+        Seu nome é Spark ⚡. Não é necessário mencionar seu nome em todas as respostas, a menos que o usuário pergunte diretamente.
+
+        ### **Comportamento Geral**  
+        1. **Clareza e Objetividade**:  
+        - Responda de forma curta, clara e informativa, com base nos documentos disponíveis.  
+        - Utilize o histórico de perguntas e respostas apenas se houver uma conexão explícita com a dúvida atual.  
+        - Nunca envie o histórico de perguntas e respostas aleatoriamente, nem sem a solicitação do usuário.  
+
+        2. **Saudações**:  
+        - Caso o usuário envie uma saudação, retribua educadamente.  
+        - Se a mensagem for apenas uma saudação, não inclua informações dos documentos ou o histórico.  
+
+        3. **Uso do Histórico**:  
+        - Utilize o histórico de perguntas e respostas para fundamentar suas respostas somente se for relevante para a pergunta atual.  
+        - Nunca envie o histórico completo sem solicitação explícita.  
+
+        4. **Perguntas sobre Valores**:  
+        - Ao responder sobre valores, verifique se há a informação e forneça-a com a unidade ou grandeza associada.  
+        - Exemplo: "A pressão é 150 kPa."  
+
+        5. **Formato da Resposta**:  
+        - Sempre que possível, use Markdown para organizar suas respostas:  
+            - **Ênfase**: Use **negrito** ou _itálico_ para destacar informações importantes.  
+            - **Listas**: Utilize listas numeradas ou não ordenadas para estruturar conteúdos.  
+            - **Tabelas**: Apresente dados tabulados quando necessário.  
+            - **Citação de texto**: Use > para destacar trechos ou observações importantes.  
+            - **Bloco de código**: Formate trechos técnicos usando blocos de código.  
+
+        6. **Foco na Relevância**:  
+        - Responda apenas com informações que estão diretamente relacionadas à pergunta ou disponíveis nos documentos.  
+        - Caso não saiba a resposta, informe isso de maneira direta e clara.  
+        - Evite criar ou inventar informações para preencher lacunas.  
+
+        ### **Exemplo de Resposta em Markdown**  
+
+        ```markdown
+        **Pergunta do Usuário**: Qual é a pressão do sistema?  
+
+        **Resposta**: A pressão do sistema é **120 kPa**.
+
+        "Exemplos:\n"
+        "Ênfase:\n"
+        "    **Texto em negrito**\n"
+        "    __Texto em itálico__\n"
+        "Listas:\n"
+        "    1. Primeiro item\n"
+        "    2. Segundo item\n"
+        "    3. Terceiro item\n"
+        "Citações:\n"
+        "    > Esta é uma citação.\n"
+        "Código:\n"
+        "    `codigo_em_linha`\n"
+        "    ```Bloco de código```\n"
+        "Tabelas:\n"
+        "    | Cabeçalho 1 | Cabeçalho 2 |\n"
+        "    |-------------|-------------|\n"
+        "    | Linha 1, Col 1 | Linha 1, Col 2 |\n"
+        "    | Linha 2, Col 1 | Linha 2, Col 2 |\n"
+        "Separadores:\n"
+        "    ---\n"
+        "    ***\n"
+        "    ___\n"
+        "Escapando Caracteres:\n"
+        "    \\*Texto com asterisco\\*\n"
+        "Se o usuário não perguntar algo do documento, responda de forma natural com os dados que tem. Não invente respostas, apenas entregue o que tem, caso haja relação. Se não houver, diga que não sabe.\n"
+        "Se a pessoa pedir a localização da BRG Geradores, a localização é: https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9\n"
+        "Se a pessoa pedir a localização da GRID Geradores, a localização é: https://maps.app.goo.gl/Pssputwd5syeTdw16\n"
+        "Se a pessoa pedir a localização da SDO, a localização é: https://maps.app.goo.gl/FRrhnBG9f6HdhChf7\n"
+        "Sempre envie respostas curtas para o usuário. "
+        "Tudo que começa com TWD, TAD, DC, D8, são modelos de motores de geradores da BRG Geradores. "
+        "Evite motores marítimos e foque nos motores industriais.\n"
+        "Não de o nome e nem o caminho do arquivo/Documento"
+        f"Utilize o {periodo_do_dia} para saber o período atual do dia.\n"
+        f"""Se perceber que a pessoa está indo para o caminho de querer falar com alguém, pergunte de qual região está falando. Para as seguintes regiões, envie os números:
+            - Caso usuário envie um nome de uma cidade e não da região, pesquise de qual região ele está atraves do nome da cidade.
+            - Se for Goiânia-Goiás, o representante é [Victor Luciano](https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for Sul ou Centro-Oeste (menos Goiânia), o representante é [Ivan Felix](https://api.whatsapp.com/send?phone=5562998245318&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for Sudeste do Brasil, o representante é [Sérgio Mota](https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for Nordeste, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for o Parceiro Lew Geradores, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for Norte do Brasil, o representante é [José Otávio](https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            - Se for fazendas, o representante é [João Victor Lião](https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+            Caso a pessoa peça apenas o telefone do representante e você já tenha mandado o link do representante, envie o número de acordo:
+                - Sérgio Mota: +55 (62) 9 8117-1423
+                - José Otávio: +55 (62) 9 8117-1407
+                - Otávio Curado: +55 (62) 9 9281-0643
+                - João Victor Lião: +55 (62) 9 9904-3154
+                - Victor Luciano: +55 (62) 9 8213-4286
+                - Ivan Felix: +55 (62) 9 9824-5318
+        """     
+        "Sempre colocar o telefone do representante apos o link do whatsapp."
+        '''      
+        
+    )
+
+
+
+        # "Seu nome é Spark ⚡, nao precisa enviar toda vez o seu nome, apenas se perguntar"
+        # "Responda de forma curta, clara e informativa à pergunta do usuário com base nos documentos. "
+        # "Apenas use o Historico de perguntas ou Historico de respostas caso entenda que o usuario fez alguma pergunta relacionada a elas. "
+        # "Nunca envie o Historico de perguntas e Historico de respostas aleatoriamente e sem o usuario pedir"
+        # "Caso o usuário envie uma saudação, responda de forma educada com uma saudação de volta e, se necessário, apresente-se. "
+        # "Para mensagem que so tem saudação e nenhuma pergunta, não é necessário citar os documentos, apenas de a saudação de volta. "        
+        # "Apenas use o Historico de perguntas e Historico de respostas caso entenda que o usuario fez alguma pergunta relacionada a elas. "
+        # "Use os historicos para basear sua resposta final. "
+        # "Nunca envie o Historico de perguntas e Historico de respostas aleatoriamente e sem o usuario pedir"
+        # "Caso o usuário pergunte um valor, verifique se há o valor e forneça o valor solicitado junto com a unidade ou grandeza associada. "
+        # "Por exemplo, se o valor for uma pressão, inclua a unidade como 'bar' ou 'kPa'. Certifique-se de identificar corretamente a grandeza com base no contexto. "
+        # "Responda em Markdown, se possível, com tópicos com soluções. "
+        # "Exemplos:\n"
+        # "Ênfase:\n"
+        # "    **Texto em negrito**\n"
+        # "    __Texto em itálico__\n"
+        # "Listas:\n"
+        # "    1. Primeiro item\n"
+        # "    2. Segundo item\n"
+        # "    3. Terceiro item\n"
+        # "Citações:\n"
+        # "    > Esta é uma citação.\n"
+        # "Código:\n"
+        # "    `codigo_em_linha`\n"
+        # "    ```Bloco de código```\n"
+        # "Tabelas:\n"
+        # "    | Cabeçalho 1 | Cabeçalho 2 |\n"
+        # "    |-------------|-------------|\n"
+        # "    | Linha 1, Col 1 | Linha 1, Col 2 |\n"
+        # "    | Linha 2, Col 1 | Linha 2, Col 2 |\n"
+        # "Separadores:\n"
+        # "    ---\n"
+        # "    ***\n"
+        # "    ___\n"
+        # "Escapando Caracteres:\n"
+        # "    \\*Texto com asterisco\\*\n"
+        # "Se o usuário não perguntar algo do documento, responda de forma natural com os dados que tem. Não invente respostas, apenas entregue o que tem, caso haja relação. Se não houver, diga que não sabe.\n"
+        # "Se a pessoa pedir a localização da BRG Geradores, a localização é: https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9\n"
+        # "Se a pessoa pedir a localização da GRID Geradores, a localização é: https://maps.app.goo.gl/Pssputwd5syeTdw16\n"
+        # "Se a pessoa pedir a localização da SDO, a localização é: https://maps.app.goo.gl/FRrhnBG9f6HdhChf7\n"
+        # "Sempre envie respostas curtas para o usuário. "
+        # "Tudo que começa com TWD, TAD, DC, D8, são modelos de motores de geradores da BRG Geradores. "
+        # "Evite motores marítimos e foque nos motores industriais.\n"
+        # "Não de o nome e nem o caminho do arquivo/Documento"
+        # f"Utilize o {periodo_do_dia} para saber o período atual do dia.\n"
+        # f"""Se perceber que a pessoa está indo para o caminho de querer falar com alguém, pergunte de qual região está falando. Para as seguintes regiões, envie os números:
+        #     - Caso usuário envie um nome de uma cidade e não da região, pesquise de qual região ele está atraves do nome da cidade.
+        #     - Se for Goiânia-Goiás, o representante é [Victor Luciano](https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for Sul ou Centro-Oeste (menos Goiânia), o representante é [Ivan Felix](https://api.whatsapp.com/send?phone=5562998245318&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for Sudeste do Brasil, o representante é [Sérgio Mota](https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for Nordeste, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for o Parceiro Lew Geradores, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for Norte do Brasil, o representante é [José Otávio](https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     - Se for fazendas, o representante é [João Victor Lião](https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
+        #     Caso a pessoa peça apenas o telefone do representante e você já tenha mandado o link do representante, envie o número de acordo:
+        #         - Sérgio Mota: +55 (62) 9 8117-1423
+        #         - José Otávio: +55 (62) 9 8117-1407
+        #         - Otávio Curado: +55 (62) 9 9281-0643
+        #         - João Victor Lião: +55 (62) 9 9904-3154
+        #         - Victor Luciano: +55 (62) 9 8213-4286
+        #         - Ivan Felix: +55 (62) 9 9824-5318
+        # """     
+        # "Sempre colocar o telefone do representante apos o link do whatsapp."
+
+
+    Pergunta_user = f"Pergunta do Usuário: {user_query}\n\n"
+
+    for i, doc in enumerate(results['documents'][0]):
+        metadata = results['metadatas'][0][i]
+        Pergunta_user += f"Documento {i+1} (arquivo: {metadata['file_name']}):\n{doc}\n\n"
+
+    if id_user and id_user in historico_perguntas:
+        Pergunta_user += f"\nÚltimas perguntas do usuário: {historico_perguntas[id_user]}"
+
+    if id_user and id_user in historico_respostas:
+        Pergunta_user += f"\nÚltimas Respostas da LLM usando pdf ou prompt: {historico_respostas[id_user]}"
+
+    Pergunta_user = clean_html(Pergunta_user)
+
+    chat_completion = client_groq.chat.completions.create(
+        messages=[
+        {
+            "role": "system",
+            "content": prompt
+        },
+        {
+            "role": "user",
+            "content": Pergunta_user,
+        }
+        ],  
+        model="llama3-70b-8192",  
+    )
+        
+    resposta = chat_completion.choices[0].message.content
+    
+    if id_user:
+        if id_user not in historico_perguntas:
+            historico_perguntas[id_user] = []
+        if len(historico_perguntas[id_user]) >= 5:
+            historico_perguntas[id_user].pop(0)
+        historico_perguntas[id_user].append(user_query)
+
+        if id_user not in historico_respostas:
+            historico_respostas[id_user] = []
+        if len(historico_respostas[id_user]) >= 5:
+            historico_respostas[id_user].pop(0)
+        historico_respostas[id_user].append(resposta)
+
+    return resposta
+
+
+
+
+
+# Função para criar ou obter a coleção
+def get_or_create_collection():
+    try:
+        collections = [c.name for c in client.list_collections()]  # Lista as coleções existentes
+        if collection_name in collections:
+            print(f"Carregando coleção existente: {collection_name}.")
+            return client.get_collection(name=collection_name)  # Retorna a coleção existente
+        else:
+            print(f"Criando nova coleção: {collection_name}.")
+            return client.create_collection(name=collection_name)  # Cria a coleção se não existir
+    except Exception as e:
+        print(f"Erro ao acessar ou criar a coleção: {e}")
+        return None  # Retorna None caso haja erro
+    
+    
+# Função para enviar resposta para o WhatsApp
+def send_response_to_whatsapp(phone, message):
+    evolution_api_url = "http://192.168.15.60:8080"  # Servidor de envio
+    evolution_api_instance = "Suporte_BRG"
+    evolution_api_key = "k3v14ilstiguaumoz8nzt"
+
+    route = f"{evolution_api_url}/message/sendText/{evolution_api_instance}"
+    headers = {
+        'Content-Type': 'application/json',
+        'apikey': evolution_api_key
+    }
+    payload = {
+        "number": phone,
+        "textMessage": {
+            "text": message
+        }
+    }
+
+    try:
+        response = requests.post(route, json=payload, headers=headers)
+        return response.json()  # Retorna a resposta da API
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+
+@app.post("/webhook")
+async def receive_webhook(request: Request):
+    try:
+        data = await request.json()
+
+        # Validar o evento do webhook
+        if data.get("event") != "messages.upsert":
+            return {"status": "error", "message": "Evento desconhecido"}
+
+        user_query = data.get("data", {}).get("message", {}).get("conversation")
+        sender = data.get("data", {}).get("key", {}).get("remoteJid")
+        id_user = sender.split('@')[0]
+        user_name = data.get("data", {}).get("pushName", {})
+        
+        message_type = None
+        message_data = data.get("data", {}).get("message", {})
+    
+        if "conversation" in message_data:
+            message_type = "text"
+        elif "imageMessage" in message_data:
+            message_type = "image"
+        elif "audioMessage" in message_data:
+            message_type = "audio"
+        elif "extendedTextMessage" in message_data:
+            message_type = "text"
+  
+        if message_type == "text":
+
+            if "extendedTextMessage" in message_data: 
+                context_info = data.get("data", {}).get("message", {}).get("extendedTextMessage", {}).get("contextInfo", {})
+                # achar variavel de diferença quando for reply no aplicativo
+                
+                if "expiration" in context_info and not "stanzaId" in context_info:
+                    # aqui é quando for msg do wpp aplicativo do pc 
+                    is_callback = False
+                    user_query = message_data["extendedTextMessage"]["text"]
+
+                    
+                elif "stanzaId" in context_info:
+                    # quando for reply no aplicativo
+                    msg_atual = message_data["extendedTextMessage"]["text"]
+                    previous_question = message_data['extendedTextMessage']['contextInfo']['quotedMessage']['conversation']
+
+                    user_query = f"\nA sua resposta anterior foi: '{previous_question}'. \nNeste contexto, o usuário está perguntando sobre: '{msg_atual}'\n."
+                    #print(user_query)
+                    is_callback = True
+
+                else:
+                    # aqui é para quando for reply do wpp celular e wpp web
+                    msg_atual = message_data["extendedTextMessage"]["text"]
+                    previous_question = message_data['extendedTextMessage']['contextInfo']['quotedMessage']['conversation']
+
+                    user_query = f"\nA sua resposta anterior foi: '{previous_question}'. \nNeste contexto, o usuário está perguntando sobre: '{msg_atual}'\n."
+                    #print(user_query)
+                    is_callback = True
+
+            elif "conversation" in message_data:
+                # aqui vem todos textos do wpp web e wpp no celular 
+                user_query = message_data["conversation"]
+                is_callback = False
+            
+            pool = dp.pool
+
+            response = await query_and_prompt_whatsapp(user_query=user_query, top_k=3, is_callback=is_callback, id_user=id_user)  
+            
+            if response is None:
+                return {"status": "error", "message": "Erro ao processar a consulta"}
+            
+            send_response_to_whatsapp(sender, response)
+            
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute("""
+                        INSERT INTO machine_learning.LLM_Bot (nome_user, pergunta_user, resposta_bot)
+                        VALUES (%s, %s, %s)
+                        """, (user_name, user_query, response))
+                        await conn.commit()
+                        # print(f"Inserido pergunta e resposta para usuario {user_name} no wpp")
+            except Exception as e:
+                print(f"Erro no banco: {e}")
+
+        
+        elif message_type == "image":
+
+            image_id = data.get("data", {}).get("key", {}).get("id")
+            instance = "Suporte_BRG"
+            evolution_api_url = "http://192.168.15.60:8080"
+
+            url = f"{evolution_api_url}/chat/getBase64FromMediaMessage/{instance}"
+
+            payload = {
+                "message": {
+                    "key": {
+                        "id": f"{image_id}"
+                    }
+                },
+                "convertTojpg": False
+            }
+
+            headers = {
+                'Content-Type': 'application/json',
+                'apikey': 'k3v14ilstiguaumoz8nzt'
+            }
+
+            # response2 = requests.post(
+            #     url,
+            #     headers=headers,
+            #     data=json.dumps(payload)  
+            # )
+
+            image_caption = message_data.get("imageMessage", {}).get("caption", "Nenhuma legenda fornecida.")
+            image_path = '/home/bruno/imagens/imagem_temporaria_wpp.jpg'
+
+            try:
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url, 
+                        headers=headers, 
+                        json=payload
+                    ) as response:
+                        # if response.status != 200:
+                        #     mensagem_erro = f"Falha ao baixar mídia: \n\n{await response.text()}"
+                        #     print(mensagem_erro)
+                        #     return {"status": "erro", "mensagem": mensagem_erro}
+                        await asyncio.sleep(5)
+
+                        resposta_json = await response.json()
+
+                        conteudo_media = base64.b64decode(resposta_json['base64'])
+
+                        # print("Payload enviado image:", json.dumps(payload, indent=2))
+                        # print("Cabeçalhos enviados image:", headers)
+                        # print("URL da requisição image:", url)
+
+                        # Criar diretório para salvar a mídia
+                        image_path = os.path.join("/home/bruno/imagens", "imagem_temporaria_wpp.jpg")
+                        os.makedirs(os.path.dirname(image_path), exist_ok=True)
+                        
+                        # Salvar a mídia
+                        with open(image_path, "wb") as arquivo_media:
+                            arquivo_media.write(conteudo_media)
+
+                        if image_caption == "Nenhuma legenda fornecida.":
+                            send_response_to_whatsapp(sender, "Por favor, envie uma legenda ou descrição junto com a imagem para que possamos analisá-la.")
+                        else:
+                            pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
+                            send_response_to_whatsapp(sender, resposta_bot_image)
+
+            except Exception as e:
+                print(f"Erro ao baixar a imagem {e}")
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url, 
+                        headers=headers, 
+                        json=payload
+                    ) as response:
+                        # if response.status != 200:
+                        #     mensagem_erro = f"Falha ao baixar mídia: \n\n{await response.text()}"
+                        #     print(mensagem_erro)
+                        #     return {"status": "erro", "mensagem": mensagem_erro}
+                        await asyncio.sleep(5)
+
+                        resposta_json = await response.json()
+
+                        conteudo_media = base64.b64decode(resposta_json['base64'])
+
+                        # print("Payload enviado image:", json.dumps(payload, indent=2))
+                        # print("Cabeçalhos enviados image:", headers)
+                        # print("URL da requisição image:", url)
+
+                        # Criar diretório para salvar a mídia
+                        image_path = os.path.join("/home/bruno/imagens", "imagem_temporaria_wpp.jpg")
+                        os.makedirs(os.path.dirname(image_path), exist_ok=True)
+                        
+                        # Salvar a mídia
+                        with open(image_path, "wb") as arquivo_media:
+                            arquivo_media.write(conteudo_media)
+
+                        if image_caption == "Nenhuma legenda fornecida.":
+                            send_response_to_whatsapp(sender, "Por favor, envie uma legenda ou descrição junto com a imagem para que possamos analisá-la.")
+                        else:
+                            pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
+                            send_response_to_whatsapp(sender, resposta_bot_image)
+
+
+            finally:
+                if os.path.exists(image_path):
+                    print("Imagem removida.")
+                    os.remove(image_path)
+
+        elif message_type == "audio":
+            try:   
+                audio_id = data.get("data", {}).get("key", {}).get("id")
+
+                if not audio_id:
+                    print("Erro: ID da mensagem não encontrado.")
+                    await asyncio.sleep(3)
+
+                instance = "Suporte_BRG"
+                evolution_api_url = "http://192.168.15.60:8080"  # Bruno Mudar
+
+                url = f"{evolution_api_url}/chat/getBase64FromMediaMessage/{instance}"
+
+                payload = {
+                    "message": {
+                        "key": {
+                            "id": f"{audio_id}"
+                        }
+                    },
+                    "convertToMp4": False
+                }
+
+                headers = {
+                    'Content-Type': 'application/json',
+                    'apikey': 'k3v14ilstiguaumoz8nzt'
+                }
+            #     response = requests.post(
+            #     url,
+            #     headers=headers,
+            #     data=json.dumps(payload)  
+            # )
+
+                caminho_media = ' /home/bruno/imagens/audio_temporario_wpp.mp4'
+                try:
+                    await asyncio.sleep(3)
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            url, 
+                            headers=headers, 
+                            json=payload
+                        ) as response:
+                            # if response.status != 200:
+                            #     mensagem_erro = f"Falha ao baixar mídia: \n\n{await response.text()}"
+                            #     print(mensagem_erro)
+                            #     return {"status": "erro", "mensagem": mensagem_erro}
+                            
+                            await asyncio.sleep(5)
+                            
+                            resposta_json = await response.json()
+
+                            conteudo_media = base64.b64decode(resposta_json['base64'])
+
+                            # print("Payload enviado:", json.dumps(payload, indent=2))
+                            # print("Cabeçalhos enviados:", headers)
+                            # print("URL da requisição:", url)
+
+                            # Criar diretório para salvar a mídia
+                            caminho_media = os.path.join("/home/bruno/imagens", "audio_temporario_wpp.mp4")
+                            os.makedirs(os.path.dirname(caminho_media), exist_ok=True)
+                            
+                            # Salvar a mídia
+                            with open(caminho_media, "wb") as arquivo_media:
+                                arquivo_media.write(conteudo_media)
+                            
+                            #print(f"Mídia baixada com sucesso e salva em: {caminho_media}")
+
+                            client = Groq(
+                                api_key="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"  # Bruno Mudar
+                            )
+
+                            try:
+                                #print("Enviando o áudio para transcrição...")
+                                with open(caminho_media , "rb") as f:
+                                    transcription = client.audio.transcriptions.create(
+                                        file=(caminho_media , f.read()),
+                                        model="whisper-large-v3-turbo",
+                                        prompt=(
+                                            "Você é uma IA que transcreve áudios em Português do Brasil. "
+                                            "Você trabalha para BRG Geradores, GRID Geradores e SDO Business. "
+                                            "Técnicos de manutenção e diretores da empresa irão enviar áudios para você, transcreva fielmente o que é dito nos áudios. "
+                                            "Alguns alarmes de geradores e controladores são em inglês, não traduza, apenas transcreva. "
+                                            "Para palavras em inglês formate em negrito, para a próxima LLM entender onde buscar a resposta. "
+                                            "Não invente, caso não consiga escutar corretamente não transcreva nada. "
+                                            "Tudo que começa com TWD, TAD, DC, D8 são motores de geradores da BRG Geradores. "
+                                            "Caso não consiga transcrever nada envie: '[Pergunta do usuário não foi possível transcrever, peça que envie um áudio com melhor qualidade.]'"
+                                        ),
+                                        response_format="text",
+                                        language="pt",
+                                        temperature=0.0
+                                    )
+                                print(f"Texto extraído do áudio: {transcription}")
+                            except Exception as e:
+                                transcription = "[Pergunta do usuário não foi possível transcrever, peça que envie um áudio com melhor qualidade.]"
+                                print(f"Erro ao transcrever o áudio: {e}")
+                                return {"status": f"Erro ao transcrever o áudio: {e}"}
+
+                            is_callback = True
+                            
+                            response = await query_and_prompt_whatsapp(user_query=transcription, top_k=3, is_callback=is_callback, id_user=id_user)
+
+                            send_response_to_whatsapp(sender, response)
+                            pool = dp.pool
+
+                            try:
+                                async with pool.acquire() as conn:
+                                    async with conn.cursor() as cursor:
+                                        await cursor.execute("""
+                                        INSERT INTO machine_learning.LLM_Bot (nome_user, pergunta_user, resposta_bot)
+                                        VALUES (%s, %s, %s)
+                                        """, (user_name, transcription, response))
+                                        await conn.commit()
+                                        #print(f"Inserido pergunta e resposta para usuario {user_name} no wpp")
+                            except Exception as e:
+                                print(f"Erro no banco: {e}")
+
+                            return {"status": "Áudio processado com sucesso"}
+                except Exception as e:
+                    print(f"Erro ao baixar o áudio: {e}")
+                    
+                    await asyncio.sleep(3)
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            url, 
+                            headers=headers, 
+                            json=payload
+                        ) as response:
+                            # if response.status != 200:
+                            #     mensagem_erro = f"Falha ao baixar mídia: \n\n{await response.text()}"
+                            #     print(mensagem_erro)
+                            #     return {"status": "erro", "mensagem": mensagem_erro}
+                            
+                            await asyncio.sleep(5)
+                            
+                            resposta_json = await response.json()
+
+                            conteudo_media = base64.b64decode(resposta_json['base64'])
+
+                            # print("Payload enviado:", json.dumps(payload, indent=2))
+                            # print("Cabeçalhos enviados:", headers)
+                            # print("URL da requisição:", url)
+
+                            # Criar diretório para salvar a mídia
+                            caminho_media = os.path.join("/home/bruno/imagens", "audio_temporario_wpp.mp4")
+                            os.makedirs(os.path.dirname(caminho_media), exist_ok=True)
+                            
+                            # Salvar a mídia
+                            with open(caminho_media, "wb") as arquivo_media:
+                                arquivo_media.write(conteudo_media)
+                            
+                            #print(f"Mídia baixada com sucesso e salva em: {caminho_media}")
+
+                            client = Groq(
+                                api_key="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"  # Bruno Mudar
+                            )
+
+                            try:
+                                #print("Enviando o áudio para transcrição...")
+                                with open(caminho_media , "rb") as f:
+                                    transcription = client.audio.transcriptions.create(
+                                        file=(caminho_media , f.read()),
+                                        model="whisper-large-v3-turbo",
+                                        prompt=(
+                                            "Você é uma IA que transcreve áudios em Português do Brasil. "
+                                            "Você trabalha para BRG Geradores, GRID Geradores e SDO Business. "
+                                            "Técnicos de manutenção e diretores da empresa irão enviar áudios para você, transcreva fielmente o que é dito nos áudios. "
+                                            "Alguns alarmes de geradores e controladores são em inglês, não traduza, apenas transcreva. "
+                                            "Para palavras em inglês formate em negrito, para a próxima LLM entender onde buscar a resposta. "
+                                            "Não invente, caso não consiga escutar corretamente não transcreva nada. "
+                                            "Tudo que começa com TWD, TAD, DC, D8 são motores de geradores da BRG Geradores. "
+                                            "Caso não consiga transcrever nada envie: '[Pergunta do usuário não foi possível transcrever, peça que envie um áudio com melhor qualidade.]'"
+                                        ),
+                                        response_format="text",
+                                        language="pt",
+                                        temperature=0.0
+                                    )
+                                print(f"Texto extraído do áudio: {transcription}")
+                            except Exception as e:
+                                transcription = "[Pergunta do usuário não foi possível transcrever, peça que envie um áudio com melhor qualidade.]"
+                                print(f"Erro ao transcrever o áudio: {e}")
+                                return {"status": f"Erro ao transcrever o áudio: {e}"}
+
+                            is_callback = True
+                            
+                            response = await query_and_prompt_whatsapp(user_query=transcription, top_k=3, is_callback=is_callback, id_user=id_user)
+
+                            send_response_to_whatsapp(sender, response)
+                            pool = dp.pool
+
+                            try:
+                                async with pool.acquire() as conn:
+                                    async with conn.cursor() as cursor:
+                                        await cursor.execute("""
+                                        INSERT INTO machine_learning.LLM_Bot (nome_user, pergunta_user, resposta_bot)
+                                        VALUES (%s, %s, %s)
+                                        """, (user_name, transcription, response))
+                                        await conn.commit()
+                                        #print(f"Inserido pergunta e resposta para usuario {user_name} no wpp")
+                            except Exception as e:
+                                print(f"Erro no banco: {e}")
+
+                            return {"status": "Áudio processado com sucesso"}
+                    
+                    return {"status": f"Erro ao baixar o áudio: {e}"}
+
+            except Exception as e:
+                print(f"Erro geral no processamento do áudio: {e}")
+                return {"status": f"Erro geral no áudio: {e}"}
+
+            finally:
+                
+                if os.path.exists(caminho_media):
+                    #print("Removendo o arquivo de áudio temporário")
+                    os.remove(caminho_media)
+
+        else:
+            Erros = "Não consegui analisar sua pergunta"
+            send_response_to_whatsapp(sender, Erros)
+            return {"status": "Tipo de mensagem não suportado"}
+
+    except Exception as e:
+        print(f"Erro no webhook: {e}")
+        return {"status": "error", "message": f"Erro interno: {e}"}
+
+
+
+
+
+############################################### fim do LLM ########################################################################################################
+
+
+
+
+
+
+
 async def selecionar_GMG(pool):
     async with pool.acquire() as conn:
         await conn.ping(reconnect=True)  # Forçar reconexão
@@ -3109,7 +4794,8 @@ async def enviar_menu_grupo(chat_id, state: FSMContext):
                 if 'menu_message_id' in user_data:
                     try:
                         # Verificar se a mensagem ainda existe
-                        await bot.edit_message_text(chat_id=chat_id, message_id=user_data['menu_message_id'], text="Recarregando o Menu...", reply_markup=None)
+                    #    await bot.edit_message_text(chat_id=chat_id, message_id=user_data['menu_message_id'], text="Recarregando o Menu...", reply_markup=None)
+                        await send_menu(chat_id, user_type, state)
                     except:
                         # Se a mensagem não existir, envia novamente
                         await send_menu(chat_id, user_type, state)
@@ -3132,6 +4818,7 @@ async def send_menu(chat_id, user_type, state: FSMContext):
             InlineKeyboardButton("Digitar código do equipamento", callback_data='2'),
             InlineKeyboardButton("Editar Usinas cadastradas", callback_data='5'),
             InlineKeyboardButton("Receber todos os tipos de notificações", callback_data='6'),
+            InlineKeyboardButton("Receber notificações via WhatsApp", callback_data='7'),
         ]
     
     keyboard.add(*buttons)
@@ -3298,6 +4985,9 @@ class Form(StatesGroup):
     ask_supervisor_name = State()
     ask_supervisor_edit_name = State()
     editar_usinas = State()
+    editar_telefone = State()
+    confirmar_telefone = State()
+
 
 async def salvar_silenciamento(cod_usuario, cod_equipamento, tempo_silenciado):
     pool = dp.pool  # Reutilizando o pool criado durante a inicialização
@@ -3632,24 +5322,27 @@ async def monitorar_leituras_consecutivas(pool):
                                         SELECT cod_usina FROM sup_geral.equipamentos
                                         WHERE codigo = %s
                                     """, (cod_equipamento,))
-                                    result = await cursor.fetchone()
+                                    usina_result = await cursor.fetchone()
 
-                                    if result is not None:
-                                        cod_usina = result[0]
-
+                                    if usina_result is not None:
+                                        cod_usina = usina_result[0]
+                                    
                                     await cursor.execute("""
                                         SELECT data_cadastro_previsto, data_cadastro_quebra 
-                                        FROM machine_learning.relatorio_quebras 
+                                        FROM machine_learning.log_relatorio_quebras 
                                         WHERE cod_equipamento = %s
                                         ORDER BY data_cadastro_previsto DESC 
                                         LIMIT 1
                                     """, (cod_equipamento,))
                                     result = await cursor.fetchone()
+                                    print(cod_equipamento, 'cod_equipamento','result', result)
 
                                     if result is not None:
                                         tempo_inicial = datetime.now()
                                         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
             
+
+                                        
                                         ultima_data_prevista, ultima_data_cadastro_quebra = result
                                         if ultima_data_prevista and ultima_data_cadastro_quebra:
                                             await cursor.execute("""
@@ -3667,6 +5360,41 @@ async def monitorar_leituras_consecutivas(pool):
                                             await conn.commit()
                                             print(f'Nova entrada 1 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
 
+                                        # elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
+                                        #     print('elif da atualizacao 2', 'ultima_data_prevista', ultima_data_prevista,'ultima_data_cadastro_quebra',ultima_data_cadastro_quebra,'agora',agora,'agora - ultima_data_prevista',agora - ultima_data_prevista )
+                                        #     await cursor.execute("""
+                                        #         UPDATE machine_learning.relatorio_quebras 
+                                        #         SET data_cadastro_previsto = %s 
+                                        #         WHERE id = (
+                                        #             SELECT id 
+                                        #             FROM (
+                                        #                 SELECT id 
+                                        #                 FROM machine_learning.relatorio_quebras 
+                                        #                 WHERE cod_equipamento = %s 
+                                        #                 ORDER BY data_cadastro_previsto DESC 
+                                        #                 LIMIT 1
+                                        #             ) AS subquery
+                                        #         )
+                                        #     """, (datetime.now(), cod_equipamento))
+                                        #     await conn.commit()
+                                        # #    print(f'Atualização no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                            
+                                        #     await cursor.execute("""
+                                        #         UPDATE machine_learning.log_relatorio_quebras 
+                                        #         SET data_cadastro_previsto = %s 
+                                        #         WHERE id = (
+                                        #             SELECT id 
+                                        #             FROM (
+                                        #                 SELECT id 
+                                        #                 FROM machine_learning.relatorio_quebras 
+                                        #                 WHERE cod_equipamento = %s 
+                                        #                 ORDER BY data_cadastro_previsto DESC 
+                                        #                 LIMIT 1
+                                        #             ) AS subquery
+                                        #         )
+                                        #     """, (datetime.now(), cod_equipamento))
+                                        #     print(f'Atualização 2 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
+                                                                                    
                                         elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
                                             await cursor.execute("""
                                                 UPDATE machine_learning.relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
@@ -3679,7 +5407,8 @@ async def monitorar_leituras_consecutivas(pool):
                                             """, (datetime.now(), cod_equipamento))
                                             await conn.commit()
                                             print(f'Atualização 2 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
-                                                                                    
+                                                     
+
                                         elif (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) >= timedelta(hours=6)) or (ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=1)):
                                             await cursor.execute("""
                                                 INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
@@ -3844,17 +5573,17 @@ async def monitorar_leituras_consecutivas(pool):
                                                     print(f"Atualização do 5 registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
 
                                                 else:
-                                                    # await cursor.execute("""
-                                                    #     INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
-                                                    #     VALUES (%s, %s, NULL, NOW())
-                                                    # """, (cod_equipamento,cod_usina))
-                                                    # await conn.commit()
+                                                    await cursor.execute("""
+                                                        INSERT INTO machine_learning.relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                        VALUES (%s, %s, NULL, NOW())
+                                                    """, (cod_equipamento,cod_usina))
+                                                    await conn.commit()
 
-                                                    # await cursor.execute("""
-                                                    #     INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
-                                                    #     VALUES (%s, %s, NULL, NOW())
-                                                    # """, (cod_equipamento,cod_usina))
-                                                    # await conn.commit()
+                                                    await cursor.execute("""
+                                                        INSERT INTO machine_learning.log_relatorio_quebras (cod_equipamento,cod_usina, data_cadastro_quebra, data_cadastro_previsto)
+                                                        VALUES (%s, %s, NULL, NOW())
+                                                    """, (cod_equipamento,cod_usina))
+                                                    await conn.commit()
                                                     print(f"Inserção 6 de novo registro de log e quebra para o equipamento {cod_equipamento}.",data_cadastro_formatada,'\n')
                                                     del equipamentos_com_alerta[cod_equipamento]
                                                     del equipamentos_alerta_0[cod_equipamento]
@@ -3887,8 +5616,10 @@ async def monitorar_leituras_consecutivas(pool):
                                                         del equipamentos_alerta_0[cod_equipamento]
                                                     else:
                                                         pass
-                                                else:
-                                                    print('sem resultado de pesquisa 3')
+                                            else:
+                                                del equipamentos_com_alerta[cod_equipamento]
+                                                del equipamentos_alerta_0[cod_equipamento]
+                                                print('sem resultado de pesquisa 3')
 
                         except Exception as e:
                             print(f"Erro ao processar leitura para o equipamento {leitura[0]}: {e}")
@@ -4199,7 +5930,7 @@ async def process_supervisor_name(message: types.Message, state: FSMContext):
                     await conn.commit()
 
                 # Mensagem de resposta para o grupo
-                response_message_grupo = f"A informação foi atualizada.\n O usuário do supervisorio para {user_nome_telegram} é: {user_input}"
+                response_message_grupo = f"A informação foi atualizada grupo.\n O usuário do supervisorio para {user_nome_telegram} é: {user_input}"
                 await bot.send_message(message.chat.id, response_message_grupo)
 
                 if id_telegram_result:
@@ -4210,7 +5941,7 @@ async def process_supervisor_name(message: types.Message, state: FSMContext):
                     await bot.send_message(id_telegram, response_message)
 
                     # Realiza as ações de boas-vindas e envio de previsão de valor de equipamento
-                    await boas_vindas(message, id_telegram)
+                #    await boas_vindas(message, id_telegram)  # Passa None para a mensagem e id_telegram para redirecionar ao usuário
 
                     await state.finish()
                 else:
@@ -4508,6 +6239,209 @@ async def toggle_notificacoes(callback_query: types.CallbackQuery, state: FSMCon
         await bot.send_message(chat_id, "Ocorreu um erro ao processar a sua solicitação. Por favor, tente novamente.")
 
 
+
+
+
+
+# inicio botao de configuracao do whatsapp
+
+@dp.callback_query_handler(lambda query: query.data == '7')
+async def receber_notificacoes_whatsapp(query: CallbackQuery, state: FSMContext):
+    chat_id = query.message.chat.id
+
+    # Apagar o menu existente
+    await bot.delete_message(chat_id, query.message.message_id)
+
+    # Obter o ID do Telegram do usuário
+    id_telegram = chat_id
+
+    try:
+        # Usar a pool de conexões para interagir com o banco de dados
+        async with dp.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT telefone, somente_telefone FROM machine_learning.usuarios_telegram WHERE id_telegram = %s",
+                    (id_telegram,)
+                )
+                user = await cursor.fetchone()
+
+            if user:  # Usuário já está cadastrado
+                telefone, somente_telefone = user
+
+                if telefone:  # Telefone já cadastrado
+                    keyboard = InlineKeyboardMarkup(row_width=1)
+                    keyboard.add(
+                        InlineKeyboardButton("Editar número", callback_data="editar_numero"),
+                        InlineKeyboardButton(
+                            "Não receber notificações" if somente_telefone else "Receber notificações",
+                            callback_data="whatsapp_toggle_notificacoes"
+                        )
+                    )
+                    await bot.send_message(chat_id, f"Seu número cadastrado é: {telefone}. Escolha uma opção:", reply_markup=keyboard)
+                else:  # Telefone não cadastrado
+                    await bot.send_message(chat_id, "Você ainda não cadastrou um número de telefone. Informe seu número no formato 55DDD12345678:")
+                    await Form.editar_telefone.set()
+            else:  # Usuário ainda não cadastrado
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        "INSERT INTO machine_learning.usuarios_telegram (id_telegram) VALUES (%s)",
+                        (id_telegram,)
+                    )
+                await bot.send_message(chat_id, "Você ainda não cadastrou um número de telefone. Por favor, informe seu número:")
+                await Form.editar_telefone.set()
+    except Exception as e:
+        await bot.send_message(chat_id, f"Erro ao processar sua solicitação: {str(e)}")
+
+
+@dp.message_handler(state=Form.editar_telefone)
+async def salvar_telefone(message: types.Message, state: FSMContext):
+    telefone = message.text.strip()
+
+    import re
+
+    # Remove todos os caracteres não numéricos
+    telefone_formatado = re.sub(r"\D", "", telefone)
+
+    # Verificar e ajustar o formato
+    if len(telefone_formatado) >= 10:
+        if telefone_formatado.startswith("55"):
+            # Já tem o código do país, ajustar DDD e número
+            telefone_formatado = "55" + telefone_formatado[2:].zfill(11)
+        else:
+            # Adicionar código do país e ajustar
+            telefone_formatado = "55" + telefone_formatado.zfill(11)
+    else:
+        await bot.send_message(
+            message.chat.id,
+            "Número inválido. Certifique-se de usar o formato: DDD + número com 9 dígitos (exemplo: 62 12345678)."
+        )
+        return
+
+    # Confirmar o número com o usuário
+    await state.update_data(telefone=telefone_formatado)
+
+    # Criar o teclado para confirmação
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("Sim", callback_data="confirmar_telefone"),
+        InlineKeyboardButton("Não", callback_data="redefinir_telefone")
+    )
+    await bot.send_message(
+        message.chat.id,
+        f"O número {telefone_formatado} está correto?",
+        reply_markup=keyboard
+    )
+    await Form.confirmar_telefone.set()
+
+
+
+@dp.callback_query_handler(lambda query: query.data in ["confirmar_telefone", "redefinir_telefone"], state=Form.confirmar_telefone)
+async def confirmar_telefone_callback(query: CallbackQuery, state: FSMContext):
+    chat_id = query.message.chat.id
+
+    if query.data == "confirmar_telefone":
+        # Recuperar o telefone do estado
+        user_data = await state.get_data()
+        telefone = user_data.get("telefone")
+
+        # Usar a pool para salvar no banco de dados
+        try:
+            async with dp.pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    # Atualizar o telefone e o campo somente_telefone
+                    await cursor.execute(
+                        """
+                        UPDATE machine_learning.usuarios_telegram
+                        SET telefone = %s, somente_telefone = 1
+                        WHERE id_telegram = %s
+                        """,
+                        (telefone, chat_id)
+                    )
+                    await conn.commit()  # Confirmar a transação
+
+            await bot.send_message(chat_id, "Número salvo com sucesso! Você receberá notificações via WhatsApp.")
+            await state.finish()
+
+        except Exception as e:
+            await bot.send_message(chat_id, f"Erro ao salvar o número: {str(e)}")
+    elif query.data == "redefinir_telefone":
+        await bot.send_message(chat_id, "Por favor, insira seu número novamente:")
+        await Form.editar_telefone.set()
+
+
+
+@dp.callback_query_handler(lambda query: query.data == "whatsapp_toggle_notificacoes", state="*")
+async def whatsapp_toggle_notificacoes(query: CallbackQuery):
+    chat_id = query.message.chat.id
+    message_id = query.message.message_id
+
+    try:
+        async with dp.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Obter o estado atual de `somente_telefone`
+                await cursor.execute(
+                    """
+                    SELECT telefone, somente_telefone
+                    FROM machine_learning.usuarios_telegram
+                    WHERE id_telegram = %s
+                    """,
+                    (chat_id,)
+                )
+                user = await cursor.fetchone()
+
+                if user is None:
+                    await query.answer("Usuário não encontrado no sistema.", show_alert=True)
+                    return
+
+                telefone, somente_telefone = user
+                novo_estado = 0 if somente_telefone else 1
+
+                # Atualizar o estado no banco de dados
+                await cursor.execute(
+                    """
+                    UPDATE machine_learning.usuarios_telegram
+                    SET somente_telefone = %s
+                    WHERE id_telegram = %s
+                    """,
+                    (novo_estado, chat_id)
+                )
+                await conn.commit()
+
+        # Apagar a mensagem existente
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+
+        # Enviar uma nova mensagem com as opções atualizadas
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            InlineKeyboardButton("Editar número", callback_data="editar_numero"),
+            InlineKeyboardButton(
+                "Não receber notificações" if novo_estado else "Receber notificações",
+                callback_data="whatsapp_toggle_notificacoes"
+            )
+        )
+        texto = (
+            f"Seu número cadastrado é: {telefone}. Escolha uma opção:"
+        )
+        await bot.send_message(chat_id, texto, reply_markup=keyboard)
+
+    except Exception as e:
+        # Tratar erros e enviar feedback ao usuário
+        await bot.send_message(chat_id, f"Erro ao processar sua solicitação: {str(e)}")
+        print(f"Erro ao alternar notificações: {e}")  # Log para depuração
+
+
+@dp.callback_query_handler(lambda query: query.data == "editar_numero", state="*")
+async def editar_numero_callback(query: CallbackQuery, state: FSMContext):
+    chat_id = query.message.chat.id
+
+    # Apagar a mensagem atual
+    await bot.delete_message(chat_id, query.message.message_id)
+
+    # Pedir o novo número de telefone
+    await bot.send_message(chat_id, "Por favor, insira seu novo número de telefone:")
+    await Form.editar_telefone.set()
+
+# fim do botao de configuracao do whatsapp
 
 
 
@@ -4849,12 +6783,16 @@ async def callback_silenciar_usina_tempo(query):
         print("Erro ao extrair código da Usina ou tempo.")
 
 
+
+class CadastroState(StatesGroup):
+    aguardando_username = State()
+
+
 @dp.message_handler(commands=['start'])
 async def enviar_boas_vindas(message: types.Message):
     chat_id = message.chat.id
     chat_type = message.chat.type
-    pool = dp.pool  # Reutilizando o pool criado durante a inicialização
-
+    pool = dp.pool  
     primeiro_acesso = None
     usuario = None
     
@@ -4868,7 +6806,7 @@ async def enviar_boas_vindas(message: types.Message):
         print("Erro: id_grupo é inválido")
 
     async with pool.acquire() as conn:
-        await conn.ping(reconnect=True)  # Forçar reconexão
+        await conn.ping(reconnect=True) 
         async with conn.cursor() as cursor:
             await cursor.execute("SELECT primeiro_acesso, usuario FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
             result = await cursor.fetchone()
@@ -4892,13 +6830,24 @@ async def enviar_boas_vindas(message: types.Message):
                             await message.reply("Grupo atualizado com sucesso!\nUse o botão /menu abaixo para acessar o Menu.", reply_markup=teclado_menu)
                         await conn.commit()
                     else:
-                        await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
+                        await bot.send_photo(
+                            chat_id,
+                            photo=open("/home/bruno/imagens/usuario_brg.png", "rb"),
+                            caption=(
+                                "Olá! Para continuar, precisamos do <b>Usuário</b> do supervisório da BRG.\n\n"
+                                "➡️ Acesse o link abaixo para abrir o supervisório da BRG e copie o <b>Usuário</b> que aparece no centro "
+                                "(marcado em vermelho e com a seta indicando):\n"
+                                '<a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar Supervisório</a>\n\n'
+                                "✅ Depois, volte aqui no Telegram e <b>digite o nome de usuário</b> no campo de texto (a barra onde você escreve mensagens)."
+                            ),
+                            parse_mode='HTML'
+                        )
+                        await CadastroState.aguardando_username.set()  # Define o estado de espera
 
                 else:
                     await message.reply(f"Bem-vindo de volta, {usuario}!\nSeus equipamentos estão sendo atualizados constantemente. Qualquer intervenção, você será notificado aqui.", parse_mode='HTML')
                     await cursor.execute("UPDATE machine_learning.usuarios_telegram SET bloqueado = 0 WHERE id_telegram = %s", (chat_id,))
                     await conn.commit()
-                #    await send_welcome(message)
             else:
                 if chat_type in ['group', 'supergroup']:
                     await cursor.execute("SELECT * FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
@@ -4914,9 +6863,19 @@ async def enviar_boas_vindas(message: types.Message):
                         await message.reply("Grupo atualizado com sucesso!\nDigite /menu para opções")
                     await conn.commit()
                 else:
-                    await bot.send_message(chat_id, 'Olá! \nQual é o seu usuário no supervisório da BRG?\n                 <a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar supervisório</a>', parse_mode='HTML')
-
-
+                    await bot.send_photo(
+                        chat_id,
+                        photo=open("/home/bruno/imagens/usuario_brg.png", "rb"), 
+                        caption=(
+                            "Olá! Para continuar, precisamos do <b>Usuário</b> do supervisório da BRG.\n\n"
+                            "➡️ Acesse o link abaixo para abrir o supervisório da BRG e copie o <b>Usuário</b> que aparece no centro "
+                            "(marcado em vermelho e com a seta indicando):\n"
+                            '<a href="https://supervisorio.brggeradores.com.br/beta/index.php">Acessar Supervisório</a>\n\n'
+                            "✅ Depois, volte aqui no Telegram e <b>digite o nome de usuário</b> no campo de texto (a barra onde você escreve mensagens)."
+                        ),
+                        parse_mode='HTML'
+                    )
+                    await CadastroState.aguardando_username.set()  # Define o estado de espera
 
 async def cadastrar_usinas_usuario(pool, cod_usuario, cod_usinas):
     try:
@@ -4945,7 +6904,7 @@ async def cadastrar_usinas_usuario(pool, cod_usuario, cod_usinas):
         print(f"Erro ao cadastrar usinas para o usuário {cod_usuario}: {e}")
 
 
-
+'''
 async def boas_vindas(message: types.Message, id_telegram=None):
     try:
         user_input = message.text.lstrip('/')
@@ -5019,21 +6978,104 @@ async def boas_vindas(message: types.Message, id_telegram=None):
     except Exception as e:
         print(f"Erro na função boas_vindas: {e}")
 
+'''
 
-@dp.message_handler()
-async def save_username(message: types.Message):
+async def boas_vindas(message: types.Message, id_telegram=None):
+    try:
+        user_input = message.text.lstrip('/')
+        username = user_input
+        chat_id = message.chat.id
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+
+        async with pool.acquire() as conn:
+            await conn.ping(reconnect=True)  # Forçar reconexão
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT nome, codigo FROM sup_geral.usuarios WHERE login = %s", (username,))
+                result = await cursor.fetchone()
+
+                if result is not None:
+                    nome_supervisorio, cod_usuario = result
+
+                    await cursor.execute("SELECT primeiro_acesso FROM machine_learning.usuarios_telegram WHERE usuario = %s", (username,))
+                    primeiro_acesso_row = await cursor.fetchone()
+                    if primeiro_acesso_row is not None:
+                        primeiro_acesso = primeiro_acesso_row[0]
+
+                        if primeiro_acesso == 1:
+                            # Obter códigos das usinas
+                            await cursor.execute("SELECT cod_usina FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario = %s", (cod_usuario,))
+                            cod_usinas = await cursor.fetchall() or []  # Define uma lista vazia se não houver resultados
+
+                            if cod_usinas:
+                                nomes_usinas = []
+
+                                for cod_usina_tuple in cod_usinas:
+                                    cod_usina = cod_usina_tuple[0]
+                                    await cursor.execute("SELECT nome FROM sup_geral.usinas WHERE codigo = %s", (cod_usina,))
+                                    nome_usina_row = await cursor.fetchone()
+                                    if nome_usina_row is not None:
+                                        nome_usina = nome_usina_row[0]
+                                        nomes_usinas.append(f"{cod_usina} - {nome_usina}")
+                                    else:
+                                        print(f"Nome da usina com código {cod_usina} não encontrado.")
+                                nomes_usinas_str = '\n'.join(nomes_usinas)
+
+                                # Gerar a mensagem completa
+                                mensagem = f"Aqui está todas as usinas que {nome_supervisorio} está cadastrado:\n{nomes_usinas_str}"
+
+                                # Enviar a mensagem em partes, se necessário
+                                if len(mensagem) > 4000:
+                                    partes_mensagem = [mensagem[i:i + 4000] for i in range(0, len(mensagem), 4000)]
+                                    for parte in partes_mensagem:
+                                        await bot.send_message(chat_id, parte)
+                                else:
+                                    await bot.send_message(chat_id, mensagem)
+
+                                # Chame a função para cadastrar as usinas
+                                await cadastrar_usinas_usuario(pool, cod_usuario, [cod_usina[0] for cod_usina in cod_usinas])
+
+                            else:
+                                print("Nenhuma usina encontrada para o usuário.")
+
+                            # Atualizar o campo 'primeiro_acesso'
+                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET primeiro_acesso = 0 WHERE usuario = %s", (username,))
+                            await conn.commit()
+                            print('Setando para zero o primeiro_acesso', username)
+
+                        else:
+                            await message.reply("Usuário já existente.")
+
+                            # Atualizar o campo 'primeiro_acesso'
+                            await cursor.execute("UPDATE machine_learning.usuarios_telegram SET primeiro_acesso = 0 WHERE usuario = %s", (username,))
+                            await conn.commit()
+                            print('Setando para zero o primeiro_acesso', username)
+
+                    else:
+                        print("Nenhum valor retornado para o campo 'primeiro_acesso' na tabela 'usuarios_telegram'.")
+                else:
+                    await message.reply("Usuário não encontrado.")
+    except Exception as e:
+        print(f"Erro na função boas_vindas: {e}")
+
+
+
+
+
+#@dp.message_handler()
+#async def save_username(message: types.Message):
+@dp.message_handler(state=CadastroState.aguardando_username)
+async def save_username(message: types.Message, state: FSMContext):
     try:
         user_input = message.text.lstrip('/')
         username = user_input
         chat_type = message.chat.type
-        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
-
+        pool = dp.pool
         full_name = f"{message.from_user.first_name} {message.from_user.last_name}"
         name = f"{message.from_user.first_name}"
         chat_id = message.chat.id
 
         async with pool.acquire() as conn:
-            await conn.ping(reconnect=True)  # Forçar reconexão
+            await conn.ping(reconnect=True) 
             async with conn.cursor() as cursor:
                 await cursor.execute("SELECT nome, codigo FROM sup_geral.usuarios WHERE login = %s", (username,))
                 result = await cursor.fetchone()
@@ -5072,8 +7114,6 @@ async def save_username(message: types.Message):
                                 data_cadastro = (await cursor.fetchone())[0]
                                 await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = 'Grupo Telegram', id_telegram = %s, data_cadastro = %s WHERE nome_telegram = %s",
                                                    (username, chat_id, data_cadastro, full_name))
-                                # await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, id_telegram = %s, data_cadastro = %s WHERE nome_telegram = %s",
-                                #                   (0, username, chat_id, data_cadastro, full_name))
                                 await conn.commit()
                                 await message.reply("Usuário atualizado com sucesso!")
                             else:
@@ -5088,10 +7128,101 @@ async def save_username(message: types.Message):
                         id_grupo = await id_chat_grupo(pool)
                         print(id_grupo)
                         await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite /menu e insira manualmente')
+                        
+        await state.finish()
+
+    except Exception as e:
+        print(f"Erro ao salvar o nome de usuário: {e}")
+        await state.finish()
+
+
+
+'''
+
+@dp.message_handler()
+async def save_username(message: types.Message):
+    try:
+        user_input = message.text.lstrip('/')
+        username = user_input
+        chat_type = message.chat.type
+        pool = dp.pool  # Reutilizando o pool criado durante a inicialização
+
+        full_name = f"{message.from_user.first_name} {message.from_user.last_name}"
+        name = f"{message.from_user.first_name}"
+        chat_id = message.chat.id
+        # Flag para verificar se algo foi alterado
+        alguma_acao_realizada = False
+
+        async with pool.acquire() as conn:
+            await conn.ping(reconnect=True)  # Forçar reconexão
+            async with conn.cursor() as cursor:
+                await cursor.execute("SELECT nome, codigo FROM sup_geral.usuarios WHERE login = %s", (username,))
+                result = await cursor.fetchone()
+
+                if result is not None:
+                    nome_supervisorio, cod_usuario = result
+
+                    await cursor.execute("SELECT * FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                    result = await cursor.fetchone()
+
+                    if result is None:
+                        query = "INSERT INTO machine_learning.usuarios_telegram (usuario, nome_supervisorio, nome_telegram, id_telegram, cod_usuario, ativo) VALUES (%s, %s, %s, %s, %s, %s)"
+                        values = (username, nome_supervisorio, full_name, chat_id, cod_usuario, 1)
+                        await cursor.execute(query, values)
+                        await message.reply("Usuário salvo com sucesso!")
+                        await boas_vindas(message)
+                        alguma_acao_realizada = True
+                    else:
+                        await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, nome_telegram = %s, cod_usuario = %s, ativo = %s WHERE id_telegram = %s",
+                                           (username, nome_supervisorio, full_name, cod_usuario, 1, chat_id))
+                        await message.reply("Usuário atualizado com sucesso!")
+                        await boas_vindas(message)
+                        alguma_acao_realizada = True
+                    await conn.commit()
+                #    await boas_vindas(message)
+
+                else:
+                    await cursor.execute("SELECT * FROM machine_learning.usuarios_telegram WHERE nome_telegram = %s", (full_name,))
+                    result = await cursor.fetchone()
+
+                    if result is not None:
+
+                        if chat_type in ['group', 'supergroup']:
+                            await cursor.execute("SELECT * FROM machine_learning.usuarios_telegram WHERE id_telegram = %s", (chat_id,))
+                            result = await cursor.fetchone()
+                            if result is None:
+                                await cursor.execute("SELECT data_cadastro FROM machine_learning.usuarios_telegram WHERE nome_telegram = %s", (full_name,))
+                                data_cadastro = (await cursor.fetchone())[0]
+                                await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = 'Grupo Telegram', id_telegram = %s, data_cadastro = %s WHERE nome_telegram = %s",
+                                                   (username, chat_id, data_cadastro, full_name))
+                                # await cursor.execute("UPDATE machine_learning.usuarios_telegram SET usuario = %s, nome_supervisorio = %s, id_telegram = %s, data_cadastro = %s WHERE nome_telegram = %s",
+                                #                   (0, username, chat_id, data_cadastro, full_name))
+                                await conn.commit()
+                                alguma_acao_realizada = True
+                                await message.reply("Usuário atualizado com sucesso!")
+                            else:
+                                await message.reply("Você não pode editar o usuário aqui, se quiser editar, digite /menu!")
+
+                    else:
+                        query = "INSERT INTO machine_learning.usuarios_telegram (usuario, nome_telegram, nome_supervisorio, id_telegram, ativo) VALUES (%s, %s, %s, %s, %s)"
+                        values = (0, full_name, username, chat_id, 1)
+                        await cursor.execute(query, values)
+                        await conn.commit()
+                        alguma_acao_realizada = True
+                        await message.reply("Nome do usuário não encontrado, enviado para a administração!")
+                        id_grupo = await id_chat_grupo(pool)
+                        print(id_grupo)
+                        await bot.send_message(id_grupo, f'Usuario {full_name} de ID ({chat_id}) não encontrado no banco de dados, digite /menu e insira manualmente')
+
+        # Caso nenhuma ação tenha sido realizada, enviar a mensagem padrão
+        if not alguma_acao_realizada:
+            await message.reply("Oi, nada acontece")
 
     except Exception as e:
         print(f"Erro ao salvar o nome de usuário: {e}")
 
+
+'''
 
 
 async def verificar_e_obter_coeficiente(cod_equipamento, pool):
@@ -5116,62 +7247,32 @@ async def verificar_e_obter_coeficiente(cod_equipamento, pool):
 
 
 
-from statsmodels.tsa.ar_model import AutoReg
-import numpy as np
+
 
 async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, cod_equipamento_resultado, pool):
     contagem_limites = 4
 
-    # async with pool.acquire() as conn:
-    #     await conn.ping(reconnect=True)  # Forçar reconexão
-    #     async with conn.cursor() as cursor:
-    #         await cursor.execute("SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
-    #         data_cadastro = await cursor.fetchone()
-
-    #         if data_cadastro is not None:
-    #             data_cadastro = data_cadastro[0]
-
-    #         agora = datetime.now()
-
-    #         if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
-    #             await cursor.execute("""
-    #                 UPDATE machine_learning.leituras_consecutivas
-    #                 SET alerta = 0
-    #                 WHERE cod_equipamento = %s
-    #             """, (int(cod_equipamento_resultado),))
-    #             await conn.commit()
-    #             return False, False, False
-
     async with pool.acquire() as conn:
         await conn.ping(reconnect=True)  # Forçar reconexão
         async with conn.cursor() as cursor:
-            # Buscar o último data_cadastro para o equipamento e o alerta atual
-            await cursor.execute("""
-                SELECT data_cadastro, alerta 
-                FROM machine_learning.leituras_consecutivas 
-                WHERE cod_equipamento = %s AND cod_campo = 3
-            """, (int(cod_equipamento_resultado),))
-            resultado = await cursor.fetchone()
+            await cursor.execute("SELECT data_cadastro FROM machine_learning.leituras_consecutivas WHERE cod_equipamento = %s AND cod_campo = 3", (int(cod_equipamento_resultado),))
+            data_cadastro = await cursor.fetchone()
 
-            if resultado is None:
-                # Nenhum registro encontrado para o equipamento
-                return False, False, False
+            if data_cadastro is not None:
+                data_cadastro = data_cadastro[0]
 
-            data_cadastro, alerta = resultado
             agora = datetime.now()
 
-            # Verificar se data_cadastro está desatualizado (mais de 1 hora)
-            if data_cadastro is None or (agora - data_cadastro > timedelta(hours=1)):
-                if alerta == 1:  # Atualizar o alerta somente se ele for 1
-                    await cursor.execute("""
-                        UPDATE machine_learning.leituras_consecutivas
-                        SET alerta = 0
-                        WHERE cod_equipamento = %s AND alerta = 1
-                    """, (int(cod_equipamento_resultado),))
-                    await conn.commit()
+            if data_cadastro is None or (agora - data_cadastro > timedelta(hours=5)):
+                await cursor.execute("""
+                    UPDATE machine_learning.leituras_consecutivas
+                    SET alerta = 0
+                    WHERE cod_equipamento = %s AND alerta = 1
+                """, (int(cod_equipamento_resultado),))
+                await conn.commit()
+            #    print(f"Equipamento {cod_equipamento_resultado}: alerta setado para 0, mais de 5 horas sem atualização em fazer_previsao_sempre_alerta.")
+
                 return False, False, False
-
-
         
         #    if data_cadastro is not None or (agora - data_cadastro <= timedelta(hours=1)):
 
@@ -5197,9 +7298,10 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
                 await cursor.execute("""
                 UPDATE machine_learning.leituras_consecutivas
                 SET alerta = 0
-                WHERE cod_equipamento = %s
+                WHERE cod_equipamento = %s AND alerta = 1
                 """, (int(cod_equipamento_resultado),))
                 await conn.commit()
+            #    print(f"Equipamento {cod_equipamento_resultado}: alerta setado para 0, mais de 5 horas sem atualização em fazer_previsao_sempre_alerta 2.")
 
                 return previsoes, False, False
 
@@ -5256,8 +7358,8 @@ async def fazer_previsao_sempre_alerta(valores_atuais, coeficiente, intercepto, 
             # print('\nvalores_atuais_76 - ', valores_atuais_76)
             # print('\nprevisoes_futuras_76 - ', previsoes_futuras_76)
             
-            limite_mais = 15
-            limite_menos = -15
+            limite_mais = 20
+            limite_menos = -20
             
             contagem_acima_do_limite = 0
             contagem_abaixo_do_limite = 0
@@ -5356,9 +7458,10 @@ async def fazer_previsao_sempre(valores_atuais, coeficiente, intercepto, cod_equ
                 await cursor.execute("""
                     UPDATE machine_learning.leituras_consecutivas
                     SET alerta = 0
-                    WHERE cod_equipamento = %s
+                    WHERE cod_equipamento = %s AND alerta = 1
                 """, (int(cod_equipamento_resultado),))
                 await conn.commit()
+            #    print(f"Equipamento {cod_equipamento_resultado}: alerta setado para 0, mais de 5 horas sem atualização em fazer_previsao_sempre.")
 
         print('Mais de uma hora, setando para 0 o alerta', cod_equipamento_resultado)
 
@@ -5546,9 +7649,6 @@ async def processar_equipamentos(cod_equipamentos, tabelas, cod_campo_especifica
 
 
 
-from datetime import datetime, timedelta
-import pandas as pd
-import asyncio
 
 '''
 
@@ -5749,7 +7849,7 @@ async def processar_equipamentos(cod_equipamentos, tabela_leituras, cod_campos, 
                 pass
 
         except Exception as e:
-            print(f"Erro: {e}")
+            print(f"Erro em processar_equipamentos: {e}")
 
         # Tempo de execução
         fim = datetime.now()
@@ -5807,13 +7907,13 @@ async def verificar_e_excluir_linhas_expiradas(pool):
                             print(f"Ocorreu um erro em verificar_e_excluir_linhas_expiradas ao processar o equipamento {cod_equipamento}: {str(e)}")
 
         except Exception as e:
-            print(f"Ocorreu um erro: {e}")
+            print(f"Ocorreu um erro em verificar_e_excluir_linhas_expiradas: {e}")
         await asyncio.sleep(50)
 
 
 codigo_de_alarmes_desejados = set([
     1, 243, 244, 253, 256, 259, 262, 265, 269, 272, 273, 279, 280, 281, 301, 304, 350, 351, 352, 353, 356, 357, 381,
-    383, 384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405, 411, 412, 413, 414, 415, 416, 471, 472, 473, 528, 590,
+    384, 385, 386, 387, 388, 389, 390, 400, 401, 404, 405, 411, 412, 413, 414, 415, 416, 471, 472, 473, 528, 590,
     591, 592, 593, 594, 595, 596, 597, 598, 599, 600, 602, 603, 604, 611, 615, 616, 617, 631, 635, 637, 638, 657, 658,
     669, 678, 725, 727, 728, 729, 730, 731, 732, 735
 ])
@@ -6227,11 +8327,11 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                 #    print("(loop 1 'previsao') A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                     if usina_ativa_row and usina_ativa_row[0] == 1:
-                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone, somente_telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                         result = await cursor.fetchone()
                                         
                                         if result:
-                                            id_telegram, nome_usuario, ativo, telefone = result
+                                            id_telegram, nome_usuario, ativo, telefone, somente_telefone = result
                                             if ativo == 1:
                                                 try:
                                                     nomes_usuarios.append(nome_usuario)
@@ -6239,45 +8339,59 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                     botao_receber_alarmes = InlineKeyboardButton("Receber Alarmes", callback_data=f'receber_alarmes_{cod_usina}')
                     
                                                     keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
+        
+                                                    if somente_telefone == 0:
                     
-                                                    mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-                                                    await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                                                        mensagem_final = f'🟡 <b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
 
                                                     print('inicio do payload previsao loop')
 
-                                                    # Se o telefone é uma tupla, pega o primeiro elemento
+                                                    print("Início do payload previsão loop")
+
+                                                    # Se o telefone for uma tupla, extrai o primeiro elemento
                                                     if isinstance(telefone, tuple):
                                                         telefone = telefone[0]
-                                                        
-                                                    # Extrai o valor da tupla
-                                                    if telefone:  # Verifica se telefone não é None
-                                                        telefone = telefone[0]  # Pega o primeiro elemento da tupla
-                                                        telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
-                                                        if not telefone_formatado.startswith("+"):
-                                                            telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
 
-                                                        # Monta a mensagem
-                                                        mensagem_final_wtss = (
-                                                            f"🟡 **ALERTA!**\n\n"
-                                                            f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                                #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
-                                                            + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                                        )
+                                                    if somente_telefone == 1:
 
-                                                        # Monta o payload
-                                                        payload = {
-                                                            "number": telefone_formatado,
-                                                            "textMessage": {
-                                                                "text": mensagem_final_wtss
-                                                            }
-                                                        }
-                                                    else:
-                                                        print("Nenhum telefone encontrado para o usuário.")
+                                                        # Verifica se o telefone não está vazio ou None
+                                                        if telefone:
+                                                            # Garante que telefone seja uma string para manipulação
+                                                            telefone = str(telefone).strip()
 
-                                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                                    print('payload',payload)
-                                                    print('fim do payload previsao loop')
+                                                            # Remove espaços, traços e outros caracteres desnecessários
+                                                            telefone_formatado = telefone.replace(" ", "").replace("-", "")
 
+                                                            # Adiciona o prefixo "+" se não estiver presente
+                                                            if not telefone_formatado.startswith("+"):
+                                                                telefone_formatado = f"+{telefone_formatado}"
+
+                                                            # Validação básica do número de telefone
+                                                            if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
+                                                                # Monta a mensagem
+                                                                mensagem_final_wtss = (
+                                                                    f"🟡 **ALERTA!**\n\n"
+                                                                    f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                                    + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                                )
+
+                                                                # Monta o payload
+                                                                payload = {
+                                                                    "number": telefone_formatado,
+                                                                    "textMessage": {
+                                                                        "text": mensagem_final_wtss
+                                                                    }
+                                                                }
+
+                                                                # Envia a mensagem
+                                                                start_chat(payload)
+                                                                print("Payload enviado:", payload)
+                                                                print("Fim do payload previsão loop")
+                                                            else:
+                                                                print(f"Erro: Número de telefone inválido após formatação - {telefone_formatado}")
+                                                        else:
+                                                            print("Nenhum telefone encontrado para o usuário.")
 
                                                     if cod_usuario in usuarios_bloqueados:
                                                         usuarios_bloqueados.remove(cod_usuario)
@@ -6308,8 +8422,9 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                         
                             mensagem_final_grupo = f'🟡 <b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n'  + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                         #    await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
+                            await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
 
-
+                            '''
                             print('inicio do payload previsao')
 
                             # Executa a consulta no banco
@@ -6328,7 +8443,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                 mensagem_final_wtss = (
                                     f"**Enviada para {nomes_usuarios_str}!**\n\n"
                                     f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                    f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                        #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
                                     + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                                 )
 
@@ -6339,14 +8454,15 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                         "text": mensagem_final_wtss
                                     }
                                 }
+                                start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                print('payload',payload)
+                                print('fim do payload previsao')
+                                
                             else:
                                 print("Nenhum telefone encontrado para o usuário.")
-
-                            start_chat(payload)  # Chama a função para enviar via WhatsApp
-                            print('payload',payload)
-                            print('fim do payload previsao')
-                                                    
-                            await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
+                        
+                            '''
+                            
                             nomes_usuarios.clear()
 
                             sys.stdout.flush()
@@ -6410,14 +8526,15 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                         )
                         result = await cursor.fetchone()
 
+
+                        # Busca o valor mais recente da tabela leituras_consecutivas para o cod_campo 114
                         if result is None:
                             continue
 
                         valores_atuais_114 = result[:-1]  # Os cinco valores
+                        valor_atual_114 = result[0]  # Apenas o valor mais recente
                         data_cadastro_consecutivas = result[-1]
 
-                        if valores_atuais_114 is None:
-                            continue
                         
                         # Verifica se os dados são novos comparados à última leitura
                         await cursor.execute(
@@ -6447,7 +8564,12 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                             ultimos_valores[cod_equipamento] = []
                         
                         # Adiciona os novos valores e remove os antigos se ultrapassar 5
-                        ultimos_valores[cod_equipamento].extend(valores_atuais_114)
+#                        ultimos_valores[cod_equipamento].extend(valores_atuais_114)
+
+                        # Adiciona o novo valor (apenas um por loop)
+                        ultimos_valores[cod_equipamento].append(valor_atual_114)
+                        # print('cod_equipamento', cod_equipamento, 'ultimos_valores',ultimos_valores[cod_equipamento])
+                        
                         if len(ultimos_valores[cod_equipamento]) > 5:
                             ultimos_valores[cod_equipamento] = ultimos_valores[cod_equipamento][-5:]
 
@@ -6517,7 +8639,6 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     #     (cod_equipamento, cod_usina, data_cadastro, data_cadastro_previsto, data_cadastro_quebra, alerta_80, valores_reais, valores_previstos, alarmes, alarme_verificado) 
                                     #     VALUES (%s, %s, NOW(), NULL, NULL, 0, %s, %s, %s, %s)
                                     # """, (cod_equipamento, cod_usina, valores_atuais_str, valores_previstos_str, alarmes_ativos_str, alarme_verificado))
-
 
                             elif media >= 80 and media < 100:
 
@@ -7049,11 +9170,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                         if usina_ativa_row and usina_ativa_row[0] == 1:
-                                            await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo, telefone, somente_telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                             result = await cursor.fetchone()
-                                            
+
                                             if result:
-                                                id_telegram, nome_usuario, ativo, telefone = result
+                                                id_telegram, nome_usuario, ativo, telefone, somente_telefone = result
                                                 if ativo == 1:
                                                     try:
                                                         nomes_usuarios.append(nome_usuario)
@@ -7062,46 +9183,59 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                                         keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
 
-                                                        mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-#                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+                                                        if somente_telefone == 0:
 
+                                                            mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+    #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
 
-                                                        print('inicio do payload 80% loop 1')
+                                                            await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
 
-                                                        # Extrai o valor da tupla
-                                                        if telefone:  # Verifica se telefone não é None
-                                                            
-                                                            # Se o telefone é uma tupla, pega o primeiro elemento
+                                                        if somente_telefone == 1:
+
+                                                            print('inicio do payload 80% loop 1')
+
+                                                            # Se o telefone for uma tupla, extrai o primeiro elemento
                                                             if isinstance(telefone, tuple):
-                                                                telefone = telefone[0]  
+                                                                telefone = telefone[0]
 
-                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
-                                                            if not telefone_formatado.startswith("+"):
-                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+                                                            # Verifica se o telefone não está vazio ou None
+                                                            if telefone:
+                                                                # Garante que telefone seja uma string para manipulação
+                                                                telefone = str(telefone).strip()
 
-                                                            # Monta a mensagem
-                                                            mensagem_final_wtss = (
-                                                                f"**ALERTA!**\n\n"
-                                                                f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                                    #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
-                                                                + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                                            )
+                                                                # Remove espaços, traços e outros caracteres desnecessários
+                                                                telefone_formatado = telefone.replace(" ", "").replace("-", "")
 
-                                                            # Monta o payload
-                                                            payload = {
-                                                                "number": telefone_formatado,
-                                                                "textMessage": {
-                                                                    "text": mensagem_final_wtss
-                                                                }
-                                                            }
-                                                        else:
-                                                            print("Nenhum telefone encontrado para o usuário.")
+                                                                # Adiciona o prefixo "+" se não estiver presente
+                                                                if not telefone_formatado.startswith("+"):
+                                                                    telefone_formatado = f"+{telefone_formatado}"
 
-                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                                        print('payload',payload)
-                                                        print('fim do payload 80% loop 1')
+                                                                # Validação básica do número de telefone
+                                                                if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
 
-                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                                                                    # Monta a mensagem
+                                                                    mensagem_final_wtss = (
+                                                                        f"*ALERTA!*\n\n"
+                                                                        f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                            #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                                                        + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                                    )
+
+                                                                    # Monta o payload
+                                                                    payload = {
+                                                                        "number": telefone_formatado,
+                                                                        "textMessage": {
+                                                                            "text": mensagem_final_wtss
+                                                                        }
+                                                                    }
+
+                                                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                                    print('payload',payload)
+                                                                    print('fim do payload 80% loop 1')
+                                                                
+                                                                else:
+                                                                    print("Nenhum telefone encontrado para o usuário.")
+
 
                                                         if cod_usuario in usuarios_bloqueados:
                                                             usuarios_bloqueados.remove(cod_usuario)
@@ -7130,7 +9264,10 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                                         
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
 
+                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
+#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
 
+                                '''
                                 print('inicio do payload 80%')
 
                                 # Executa a consulta no banco
@@ -7147,9 +9284,9 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                     # Monta a mensagem
                                     mensagem_final_wtss = (
-                                        f"**Enviada para {nomes_usuarios_str}!**\n\n"
+                                        f"*Enviada para {nomes_usuarios_str}!*\n\n"
                                         f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                #        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
                                         + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                                     )
 
@@ -7160,16 +9297,15 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                             "text": mensagem_final_wtss
                                         }
                                     }
+                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                    print('payload',payload)
+                                    print('fim do payload 80%')
+                                
                                 else:
                                     print("Nenhum telefone encontrado para o usuário.")
 
-                                start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                print('payload',payload)
-                                print('fim do payload 80%')
-
-                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
-#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
-
+                                '''
+                                
                                 nomes_usuarios.clear()
                                 sys.stdout.flush()
 
@@ -7197,11 +9333,11 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                     #    print("(loop 2) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                         if usina_ativa_row and usina_ativa_row[0] == 1:
-                                            await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                            await cursor.execute("SELECT id_telegram, usuario, ativo, todos_modelo_funcionamento, telefone, somente_telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                             result = await cursor.fetchone()
 
                                             if result:
-                                                id_telegram, nome_usuario, ativo, todos_modelo_funcionamento, telefone = result
+                                                id_telegram, nome_usuario, ativo, todos_modelo_funcionamento, telefone, somente_telefone = result
                                                 if ativo == 1 and todos_modelo_funcionamento == 1:
                                                     try:
                                                         nomes_usuarios.append(nome_usuario)
@@ -7210,46 +9346,58 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                                         keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
 
-                                                        mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
-#                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+                                                        if somente_telefone == 0:
 
-                                                        print('inicio do payload 80% loop 2')
+                                                            mensagem_final = f'<b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' not in msg])
+    #                                                        mensagem_final = f'<b>ALERTA!</b> \n\n{nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Valores' not in msg])
+                                                            await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
 
-                                                        # Extrai o valor da tupla
-                                                        if telefone:  # Verifica se telefone não é None
-                                                            
-                                                            # Se o telefone é uma tupla, pega o primeiro elemento
+                                                        if somente_telefone == 1:
+
+                                                            print('inicio do payload 80% loop 2')
+
+                                                            # Se o telefone for uma tupla, extrai o primeiro elemento
                                                             if isinstance(telefone, tuple):
-                                                                telefone = telefone[0]  
+                                                                telefone = telefone[0]
 
-                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
-                                                            if not telefone_formatado.startswith("+"):
-                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+                                                            # Verifica se o telefone não está vazio ou None
+                                                            if telefone:
+                                                                # Garante que telefone seja uma string para manipulação
+                                                                telefone = str(telefone).strip()
 
-                                                            # Monta a mensagem
-                                                            mensagem_final_wtss = (
-                                                                f"**ALERTA!**\n\n"
-                                                                f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                                        #        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
-                                                                + ''.join([msg for msg in mensagens if 'Alerta' in msg])
-                                                            )
+                                                                # Remove espaços, traços e outros caracteres desnecessários
+                                                                telefone_formatado = telefone.replace(" ", "").replace("-", "")
 
-                                                            # Monta o payload
-                                                            payload = {
-                                                                "number": telefone_formatado,
-                                                                "textMessage": {
-                                                                    "text": mensagem_final_wtss
-                                                                }
-                                                            }
-                                                        else:
-                                                            print("Nenhum telefone encontrado para o usuário.")
+                                                                # Adiciona o prefixo "+" se não estiver presente
+                                                                if not telefone_formatado.startswith("+"):
+                                                                    telefone_formatado = f"+{telefone_formatado}"
 
-                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                                        print('payload',payload)
-                                                        print('fim do payload 80% loop 2')
+                                                                # Validação básica do número de telefone
+                                                                if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
 
+                                                                    # Monta a mensagem
+                                                                    mensagem_final_wtss = (
+                                                                        f"*ALERTA!*\n\n"
+                                                                        f"Usina: {cod_usina} - {nome_usina}\n\n"
+                                                                #        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                                                                        + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                                                    )
 
-                                                        await bot.send_message(id_telegram, mensagem_final, reply_markup=keyboard, parse_mode='HTML')
+                                                                    # Monta o payload
+                                                                    payload = {
+                                                                        "number": telefone_formatado,
+                                                                        "textMessage": {
+                                                                            "text": mensagem_final_wtss
+                                                                        }
+                                                                    }
+
+                                                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                                    print('payload',payload)
+                                                                    print('fim do payload 80% loop 2')
+                                                            
+                                                            else:
+                                                                print("Nenhum telefone encontrado para o usuário.")
+
 
                                                         if cod_usuario in usuarios_bloqueados:
                                                             usuarios_bloqueados.remove(cod_usuario)
@@ -7277,8 +9425,10 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                 keyboard = InlineKeyboardMarkup().row(botao_silenciar_usina, botao_receber_alarmes)
                                                         
                                 mensagem_final_grupo = f'<b>Enviada para {nomes_usuarios_str}!</b> \n\nUsina: {cod_usina} - {nome_usina} \n\n <a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para usina</a>\n\n' + ''.join([msg for msg in mensagens if 'Alerta' in msg])
+                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
+#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
 
-
+                                '''
                                 print('inicio do payload 80%')
 
                                 # Executa a consulta no banco
@@ -7295,9 +9445,9 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
                                     # Monta a mensagem
                                     mensagem_final_wtss = (
-                                        f"**Enviada para {nomes_usuarios_str}!**\n\n"
+                                        f"*Enviada para {nomes_usuarios_str}!*\n\n"
                                         f"Usina: {cod_usina} - {nome_usina}\n\n"
-                                        f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
+                            #            f"Ir para usina: https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}\n\n"
                                         + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                                     )
 
@@ -7308,15 +9458,15 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
                                             "text": mensagem_final_wtss
                                         }
                                     }
+                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                    print('payload',payload)
+                                    print('fim do payload 80%')
+
                                 else:
                                     print("Nenhum telefone encontrado para o usuário.")
 
-                                start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                print('payload',payload)
-                                print('fim do payload 80%')
-
-                                await bot.send_message(id_grupo, mensagem_final_grupo, reply_markup=keyboard, parse_mode='HTML')
-#                                await bot.send_message(id_grupo, mensagem_final_grupo, parse_mode='HTML', reply_markup=main_keyboard)
+                                '''
+                                
                                 nomes_usuarios.clear()
                                 sys.stdout.flush()
 
@@ -7347,6 +9497,7 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
 
 import requests
 
+
 def start_chat(payload):
     url_base = "http://192.168.15.60:8080"
     url = f"{url_base}/message/sendText/Suporte_BRG"
@@ -7361,53 +9512,15 @@ def start_chat(payload):
             }
         )
 
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == "PENDING":
-                print(f"A mensagem está na fila (PENDING). Aguardando entrega...")
-                message_id = data['message']['id']
-                check_message_status(message_id)
-            else:
-                print("Mensagem enviada com sucesso:", data)
+        if response.status_code in [200, 201]:
+            print("Mensagem enviada com sucesso.")
         else:
             print(f"Erro ao enviar mensagem. Código: {response.status_code}, Resposta: {response.text}")
-
-    except requests.exceptions.RequestException as e:
-        print("Erro de conexão ao enviar mensagem:", e)
     except Exception as e:
-        print("Erro inesperado ao enviar mensagem:", e)
+        print("Erro ao enviar mensagem:", e)
 
 
 
-# Função para verificar o status da mensagem após o envio
-def check_message_status(message_id):
-    url_base = "http://192.168.15.60:8080"
-    url = f"{url_base}/message/status/{message_id}"
-
-    # Espera um tempo antes de verificar o status novamente
-    time.sleep(10)  # Aguarda 10 segundos (ajuste conforme necessário)
-
-    try:
-        # Faz uma nova requisição para verificar o status
-        response = requests.get(url)
-
-        if response.status_code == 200:
-            data = response.json()
-            status = data.get("status", "UNKNOWN")
-
-            if status == "DELIVERED":
-                print("Mensagem entregue com sucesso!")
-            elif status == "PENDING":
-                print("A mensagem ainda está na fila. Tentando novamente...")
-                # Se o status ainda for PENDING, podemos verificar novamente após outro tempo
-                check_message_status(message_id)
-            else:
-                print(f"Mensagem com status desconhecido: {status}")
-        else:
-            print(f"Erro ao verificar status. Código: {response.status_code}, Resposta: {response.text}")
-
-    except Exception as e:
-        print("Erro ao verificar status:", e)
         
 
 async def processar_alertas_equipamento(cod_equipamento, cursor, pool, hora_media_alerta_1_100, hora_media_alerta_1_80, hora_media_alerta_80_100_saida):
@@ -7828,98 +9941,135 @@ async def close_db(pool):
     
     print('fechando o banco e limpando listas')
     
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cursor:
-            # Coloca todos os `cod_equipamentos_close` em uma única query de update
-            if cod_equipamentos_close:
-                await cursor.executemany("""
-                    UPDATE machine_learning.leituras_consecutivas
-                    SET alerta = 0
-                    WHERE cod_equipamento = %s
-                    """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
-                await cursor.executemany("""
-                    UPDATE machine_learning.telegram_silenciar_bot
-                    SET receber_alarme = 0
-                    WHERE cod_equipamento = %s
-                    """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
-                
-                await conn.commit()  # Apenas um commit ao final
+    
+    # Cancelar tarefas em execução
+    global task_processos_menos_pesados, task_botoes_prioritarios, task_outros_processos
+    tasks = [task_processos_menos_pesados, task_botoes_prioritarios] + [proc['task'] for proc in task_outros_processos if proc['task']]
 
-            # Seleciona todos os dados da tabela para verificar status
-            await cursor.execute("""
-                SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme 
-                FROM machine_learning.telegram_silenciar_bot
-            """)
-            results = await cursor.fetchall()
-            
-            # Mapeia todos os equipamentos para reduzir consultas repetidas
-            equipamentos_map = {}
-            if results:
-                cod_equipamentos = [result[1] for result in results]  # Lista de cod_equipamento para filtrar
-                await cursor.executemany("""
-                    SELECT nome, cod_usina, codigo 
-                    FROM sup_geral.equipamentos 
-                    WHERE codigo = %s
-                """, [(cod_equipamento,) for cod_equipamento in cod_equipamentos])
-                
-                equipamento_results = await cursor.fetchall()
-                equipamentos_map = {equipamento_result[2]: equipamento_result for equipamento_result in equipamento_results}
+    for task in tasks:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                print(f"Tarefa {task.get_name()} cancelada.")
 
-            # Processa cada resultado e realiza as atualizações necessárias
-            updates = []
-            deletes = []
-            for result in results:
-                cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
-                equipamento_info = equipamentos_map.get(cod_equipamento)
-
-                if equipamento_info:
-                    nome, cod_usina_silenciada, _ = equipamento_info
+    print("Finalização concluída.")
+    
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Coloca todos os `cod_equipamentos_close` em uma única query de update
+                if cod_equipamentos_close:
+                    await cursor.executemany("""
+                        UPDATE machine_learning.leituras_consecutivas
+                        SET alerta = 0
+                        WHERE cod_equipamento = %s
+                        """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
+                    await cursor.executemany("""
+                        UPDATE machine_learning.telegram_silenciar_bot
+                        SET receber_alarme = 0
+                        WHERE cod_equipamento = %s
+                        """, [(int(cod_equipamento),) for cod_equipamento in cod_equipamentos_close])
                     
-                    if tempo_silenciado > 0:
-                        if receber_alarme == 1:
-                            updates.append(cod_equipamento)
-                            print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
-                        elif receber_alarme == 0:
+                    await conn.commit()  # Apenas um commit ao final
+
+                # Seleciona todos os dados da tabela para verificar status
+                await cursor.execute("""
+                    SELECT cod_usuario, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme 
+                    FROM machine_learning.telegram_silenciar_bot
+                """)
+                results = await cursor.fetchall()
+                
+                # Mapeia todos os equipamentos para reduzir consultas repetidas
+                equipamentos_map = {}
+                if results:
+                    cod_equipamentos = [result[1] for result in results]  # Lista de cod_equipamento para filtrar
+                    await cursor.executemany("""
+                        SELECT nome, cod_usina, codigo 
+                        FROM sup_geral.equipamentos 
+                        WHERE codigo = %s
+                    """, [(cod_equipamento,) for cod_equipamento in cod_equipamentos])
+                    
+                    equipamento_results = await cursor.fetchall()
+                    equipamentos_map = {equipamento_result[2]: equipamento_result for equipamento_result in equipamento_results}
+
+                # Processa cada resultado e realiza as atualizações necessárias
+                updates = []
+                deletes = []
+                for result in results:
+                    cod_usuario_verifica_silenciado, cod_equipamento, tempo_silenciado, data_cadastro, receber_alarme = result
+                    equipamento_info = equipamentos_map.get(cod_equipamento)
+
+                    if equipamento_info:
+                        nome, cod_usina_silenciada, _ = equipamento_info
+                        
+                        if tempo_silenciado > 0:
+                            if receber_alarme == 1:
+                                updates.append(cod_equipamento)
+                                print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} configurado para receber alarmes novamente.")
+                            elif receber_alarme == 0:
+                                deletes.append(cod_equipamento)
+                                print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
+                        elif tempo_silenciado == 0 and receber_alarme == 0:
                             deletes.append(cod_equipamento)
-                            print(f"Tempo de silenciamento finalizado. Linha correspondente ao equipamento {cod_equipamento} excluída da tabela.")
-                    elif tempo_silenciado == 0 and receber_alarme == 0:
-                        deletes.append(cod_equipamento)
-                        print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
+                            print(f"Coluna 'tempo_silenciado' atualizada para 0. Equipamento {cod_equipamento} com linha apagada.")
 
-            # Realiza batch updates para tempo_silenciado = 0
-            if updates:
-                await cursor.executemany("""
-                    UPDATE machine_learning.telegram_silenciar_bot
-                    SET tempo_silenciado = 0
-                    WHERE cod_equipamento = %s
-                """, [(cod_equipamento,) for cod_equipamento in updates])
-                
-            # Realiza batch deletes para remover as linhas da tabela
-            if deletes:
-                await cursor.executemany("""
-                    DELETE FROM machine_learning.telegram_silenciar_bot
-                    WHERE cod_equipamento = %s
-                """, [(cod_equipamento,) for cod_equipamento in deletes])
-                
-            await conn.commit()  # Apenas um commit ao final de todas as operações
+                # Realiza batch updates para tempo_silenciado = 0
+                if updates:
+                    await cursor.executemany("""
+                        UPDATE machine_learning.telegram_silenciar_bot
+                        SET tempo_silenciado = 0
+                        WHERE cod_equipamento = %s
+                    """, [(cod_equipamento,) for cod_equipamento in updates])
+                    
+                # Realiza batch deletes para remover as linhas da tabela
+                if deletes:
+                    await cursor.executemany("""
+                        DELETE FROM machine_learning.telegram_silenciar_bot
+                        WHERE cod_equipamento = %s
+                    """, [(cod_equipamento,) for cod_equipamento in deletes])
+                    
+                await conn.commit()  # Apenas um commit ao final de todas as operações
 
+    except Exception as e:
+        print(f"Erro em close_db: {e}")
+            
     print('db close 0')
 
+    # Adquirindo uma conexão do pool
+    async with pool.acquire() as conn:
+        # Usando a conexão para rodar a consulta
+        async with conn.cursor() as cursor:
+            # Atualizando os registros na tabela
+            update_query = """
+                UPDATE machine_learning.leituras_consecutivas
+                SET alerta = 0
+                WHERE alerta = 1
+            """
+            await cursor.execute(update_query)
+            print("Alertas atualizados para 0 com sucesso.")
+            
 
     # Limpar as listas
     alertas_enviados.clear()
     alertas_enviados_previsao.clear()
     sem_mensagem_silenciado.clear()
 
+    equipamentos_alertados.clear()
+    usinas_alertadas.clear()
+    usinas_enviadas.clear()
+    equipamentos_ativos.clear()
+    
     cnx.close()
     pool.close()  # Iniciar o fechamento do pool
     await pool.wait_closed()  # Aguardar o fechamento completo
     print('fechando conexao com o banco')
-    
 
-    
-    
-    
+
+
+
+
 def selecionar_GMG_sincrono():
     cursor.execute("SELECT codigo, ativo FROM sup_geral.tipos_equipamentos WHERE classe = 'GMG'")
     resultados = cursor.fetchall()
@@ -8200,8 +10350,8 @@ async def carregar_parametros_min_max(pool):
 
 #    print(f"Parâmetros min/max carregados para {len(parametros_min_max_motores)} motores.")
 
-async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, tensao_l1_l2, tensao_l2_l3, tensao_l3_l1, potencia_nominal, pool):
-#async def verificar_alertas(cod_equipamento, df, marca, motor, potencia, tensao, pool):
+#async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, tensao_l1_l2, tensao_l2_l3, tensao_l3_l1, potencia_nominal, pool):
+async def verificar_alertas(cod_equipamento, marca, motor, potencia,tensao, tensao_l1_l2, tensao_l2_l3, tensao_l3_l1, potencia_nominal, pool):
     # Se a tabela de parâmetros ainda não foi carregada, carregar agora
     if not parametros_min_max_motores:
         await carregar_parametros_min_max(pool)  # Adicione 'await' aqui
@@ -8232,7 +10382,8 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
     # Se não encontrar os parâmetros, avisar
     if not parametros_motor:
     #    print(f"Parâmetros não encontrados para motor {motor} da marca {marca}\n")
-        return df, limites
+        return limites
+#        return df, limites
 
     # Normalizar as chaves para remover "(Bar)" ou outros elementos entre parênteses
     parametros_motor_normalizado = {re.sub(r'\s*\(.*?\)\s*', '', chave): valor for chave, valor in parametros_motor.items()}
@@ -8330,14 +10481,15 @@ async def verificar_alertas(cod_equipamento, df, marca, motor, potencia,tensao, 
 
     }
 
-    print('\n')
-    for sensor, limite in limites.items():
-        print(f"{sensor}: Min: {limite['min']}, Max: {limite['max']}")
+    # print('\n')
+    # for sensor, limite in limites.items():
+    #     print(f"{sensor}: Min: {limite['min']}, Max: {limite['max']}")
         
     # Adiciona a coluna Alerta com valor padrão 0
-    df['Alerta'] = 0
+#    df['Alerta'] = 0
 
-    return df, limites
+#    return df, limites
+    return limites
 
 
 
@@ -8496,14 +10648,14 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                 agora = datetime.now()
 
                 # Verificar se o data_cadastro está ausente ou desatualizado em mais de 1 hora
-                if not data_cadastro or (agora - data_cadastro > timedelta(hours=1)):
+                if not data_cadastro or (agora - data_cadastro > timedelta(hours=5)):
                     await cursor.execute("""
                         UPDATE machine_learning.leituras_consecutivas
                         SET alerta = 0
-                        WHERE cod_equipamento = %s
+                        WHERE cod_equipamento = %s AND alerta = 1
                     """, (cod_equipamento,))
                     await conn.commit()
-                #    print(f"Equipamento {cod_equipamento}: alerta setado para 0, mais de 1 hora sem atualização.")
+                #    print(f"Equipamento {cod_equipamento}: alerta setado para 0, mais de 5 horas sem atualização em novo_fazer_previsao_sempre_alerta_novo.")
                     return {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
 
                 # Verificar se a diferença é maior que 15 minutos
@@ -8554,46 +10706,43 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
 
 
-                # Criar o DataFrame para os valores atuais com o último valor de cada sensor
-                df_atuais = pd.DataFrame({
-                    'Pressão do Óleo': [valores_atuais['Pressão do Óleo'][-1]],
-                    'Load Speed': [valores_atuais['Load Speed'][-1]],
-                    'Potência Ativa': [valores_atuais['Potência Ativa'][-1]],
-                    'Temperatura do ar de admissão': [valores_atuais['Temperatura do ar de admissão'][-1]],
-                    'Temperatura da água': [valores_atuais['Temperatura da Água'][-1]],
-                    'RPM': [valores_atuais['RPM'][-1]],
-                    'Pressão de admissão': [valores_atuais['Pressão de admissão'][-1]],
-                    'Tensao L1-L2': [valores_atuais['Tensao L1-L2'][-1]],
-                    'Tensao L2-L3': [valores_atuais['Tensao L2-L3'][-1]],
-                    'Tensao L3-L1': [valores_atuais['Tensao L3-L1'][-1]],
-                    'Tensao Bateria': [valores_atuais['Tensao Bateria'][-1]],
-                })
+                # # Criar o DataFrame para os valores atuais com o último valor de cada sensor
+                # df_atuais = pd.DataFrame({
+                #     'Pressão do Óleo': [valores_atuais['Pressão do Óleo'][-1]],
+                #     'Load Speed': [valores_atuais['Load Speed'][-1]],
+                #     'Potência Ativa': [valores_atuais['Potência Ativa'][-1]],
+                #     'Temperatura do ar de admissão': [valores_atuais['Temperatura do ar de admissão'][-1]],
+                #     'Temperatura da água': [valores_atuais['Temperatura da Água'][-1]],
+                #     'RPM': [valores_atuais['RPM'][-1]],
+                #     'Pressão de admissão': [valores_atuais['Pressão de admissão'][-1]],
+                #     'Tensao L1-L2': [valores_atuais['Tensao L1-L2'][-1]],
+                #     'Tensao L2-L3': [valores_atuais['Tensao L2-L3'][-1]],
+                #     'Tensao L3-L1': [valores_atuais['Tensao L3-L1'][-1]],
+                #     'Tensao Bateria': [valores_atuais['Tensao Bateria'][-1]],
+                # })
 
-                # Criar DataFrame com as previsões
-                df_previsoes = pd.DataFrame(previsoes, columns=[
-                    'Prev_Pressao_do_Oleo',
-                    'Prev_Load Speed',
-                    'Prev_Potencia_Ativa', 
-                    'Prev_Temperatura_do_ar_de_admissao',
-                    'Prev_Temperatura_Agua', 
-                    'Prev_RPM', 'Prev_Pressao_de_admissao',
-                ])
+                # # Criar DataFrame com as previsões
+                # df_previsoes = pd.DataFrame(previsoes, columns=[
+                #     'Prev_Pressao_do_Oleo',
+                #     'Prev_Load Speed',
+                #     'Prev_Potencia_Ativa', 
+                #     'Prev_Temperatura_do_ar_de_admissao',
+                #     'Prev_Temperatura_Agua', 
+                #     'Prev_RPM', 'Prev_Pressao_de_admissao',
+                # ])
 
-                # Adicionar a coluna de "Pressão do Óleo" real (do df_atuais)
-                df_previsoes['Real_Pressao_do_Oleo'] = df_atuais['Pressão do Óleo']
-                df_previsoes['Real_Load_Speed'] = df_atuais['Load Speed']
-                df_previsoes['Real_RPM'] = df_atuais['RPM']
-                df_previsoes['Real_Potencia_Ativa'] = df_atuais['Potência Ativa']
-                df_previsoes['Real_Temperatura_do_ar_de_admissao'] = df_atuais['Temperatura do ar de admissão']
-                df_previsoes['Real_Temperatura_Agua'] = df_atuais['Temperatura da água']
-                df_previsoes['Real_Pressao_de_admissao'] = df_atuais['Pressão de admissão']
-                df_previsoes['Real_Tensao_Bateria'] = df_atuais['Tensao Bateria']
+                # # Adicionar a coluna de "Pressão do Óleo" real (do df_atuais)
+                # df_previsoes['Real_Pressao_do_Oleo'] = df_atuais['Pressão do Óleo']
+                # df_previsoes['Real_Load_Speed'] = df_atuais['Load Speed']
+                # df_previsoes['Real_RPM'] = df_atuais['RPM']
+                # df_previsoes['Real_Potencia_Ativa'] = df_atuais['Potência Ativa']
+                # df_previsoes['Real_Temperatura_do_ar_de_admissao'] = df_atuais['Temperatura do ar de admissão']
+                # df_previsoes['Real_Temperatura_Agua'] = df_atuais['Temperatura da água']
+                # df_previsoes['Real_Pressao_de_admissao'] = df_atuais['Pressão de admissão']
+                # df_previsoes['Real_Tensao_Bateria'] = df_atuais['Tensao Bateria']
 
-                # Aplicar a função para definir alerta final para cada linha do DataFrame
-            #    df_previsoes['Alerta_Final'] = df_previsoes.apply(lambda row: verificar_alerta_seguindo_lista(row, lista_parametros), axis=1)
-
-                # Formatar valores numéricos para duas casas decimais
-                df_previsoes = formatar_valores(df_previsoes)
+                # # Formatar valores numéricos para duas casas decimais
+                # df_previsoes = formatar_valores(df_previsoes)
 
 
                 # Verifique se 'Potência Nominal' está em valores_atuais
@@ -8606,7 +10755,8 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
 
                 # Aplicar as regras de negócio (verificar alertas)
-                df_previsoes, limites = await verificar_alertas(cod_equipamento, df_previsoes, marca, motor, potencia, tensao,
+            #    df_previsoes, limites = await verificar_alertas(cod_equipamento, df_previsoes, marca, motor, potencia, tensao,
+                limites = await verificar_alertas(cod_equipamento, marca, motor, potencia, tensao,
                                                                                                        valores_atuais['Tensao L1-L2'][-1],
                                                                                                         valores_atuais['Tensao L2-L3'][-1],
                                                                                                         valores_atuais['Tensao L3-L1'][-1],
@@ -8638,37 +10788,6 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                             # Verifica se o sensor faz parte das variáveis para "limite menos"
                             if sensor_nome in limites_variaveis['limite_menos'] and valor < limite_menos:
                                 contagem_abaixo_do_limite[sensor_nome] += 1
-
-                # # Verificar limites para os valores previstos, comparando com os valores reais
-                # for sensor_nome, valores_previsao in previsoes.items():
-                #     contagem_acima_do_limite_previsao[sensor_nome] = 0
-                #     contagem_abaixo_do_limite_previsao[sensor_nome] = 0
-
-                #     # Verificar se o sensor possui um limite de tolerância definido no dicionário
-                #     if sensor_nome in limites_tolerancia and sensor_nome in valores_atuais:
-                #         limite_tolerancia = limites_tolerancia[sensor_nome]
-                #         valores_atuais_sensor = valores_atuais[sensor_nome]  # Os valores reais
-
-                #         for valor_previsao, valor_atual in zip(valores_previsao, valores_atuais_sensor):
-                #             # Definir os limites com base no valor previsto
-                #             limite_mais_previsao = valor_previsao + limite_tolerancia
-                #             limite_menos_previsao = valor_previsao - limite_tolerancia
-
-                #             # Verificar se o valor atual excede esses limites
-                #             if valor_atual > limite_mais_previsao:
-                #                 contagem_acima_do_limite_previsao[sensor_nome] += 1
-                #             if valor_atual < limite_menos_previsao:
-                #                 contagem_abaixo_do_limite_previsao[sensor_nome] += 1
-                #     else:
-                #         print(f"Limite de tolerância ou valores atuais não definidos para o sensor: {sensor_nome}")
-
-
-                #     # Ajuste os contadores para 0 ou 1
-                #     contagem_acima_do_limite_previsao[sensor_nome] = 1 if contagem_acima_do_limite_previsao[sensor_nome] > contagem_limites else 0
-                #     contagem_abaixo_do_limite_previsao[sensor_nome] = 1 if contagem_abaixo_do_limite_previsao[sensor_nome] > contagem_limites else 0
-                #     contagem_acima_do_limite[sensor_nome] = 1 if contagem_acima_do_limite.get(sensor_nome, 0) > contagem_limites else 0
-                #     contagem_abaixo_do_limite[sensor_nome] = 1 if contagem_abaixo_do_limite.get(sensor_nome, 0) > contagem_limites else 0
-
 
 
                 # Verificar limites para os valores previstos, comparando com os valores reais
@@ -8725,15 +10844,15 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
 
            #     for sensor in ['Load Speed', 'Potência Ativa', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão', 'Tensao L1-L2', 'Tensao L2-L3', 'Tensao L3-L1', 'Corrente L1', 'Corrente L2', 'Corrente L3', 'Frequencia', 'Tensao Bateria', 'RPM', 'Consumo', 'Horimetro', 'Temperatura da Água']:
-                for sensor in ['Load Speed', 'Potência Ativa', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão']:
-                    if sensor in valores_atuais:
-                        print(f'\n{sensor} Atual:', valores_atuais[sensor])
-                        print(f'Real Acima do Limite:', contagem_acima_do_limite.get(sensor, 0))
-                        print(f'Real Abaixo do Limite:', contagem_abaixo_do_limite.get(sensor, 0))
-                    if sensor in previsoes:
-                        print(f'{sensor} Previsto:', previsoes[sensor])
-                        print(f'Previsão Acima do Limite:', contagem_acima_do_limite_previsao.get(sensor, 0))
-                        print(f'Previsão Abaixo do Limite:', contagem_abaixo_do_limite_previsao.get(sensor, 0))
+                # for sensor in ['Load Speed', 'Potência Ativa', 'Pressão do Óleo', 'Temperatura da Água', 'Pressão de admissão', 'Temperatura do ar de admissão']:
+                #     if sensor in valores_atuais:
+                #         print(f'\n{sensor} Atual:', valores_atuais[sensor])
+                #         print(f'{sensor} Real Acima do Limite:', contagem_acima_do_limite.get(sensor, 0))
+                #         print(f'{sensor} Real Abaixo do Limite:', contagem_abaixo_do_limite.get(sensor, 0))
+                #     if sensor in previsoes:
+                #         print(f'{sensor} Previsto:', previsoes[sensor])
+                #         print(f'{sensor} Previsão Acima do Limite:', contagem_acima_do_limite_previsao.get(sensor, 0))
+                #         print(f'{sensor} Previsão Abaixo do Limite:', contagem_abaixo_do_limite_previsao.get(sensor, 0))
 
                 # Retornar valores reais e previstos junto com as contagens
                 return (
@@ -8758,59 +10877,29 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
 
 lista_parametros_previsao = {
     'Load Speed': {
-    #    'previsao': {
-        #     'acima': {
-        #         'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
-        #     },
-        #     'abaixo': {
-        #         'Pressão do Óleo': {'tipo': 'previsao', 'condicao': 'abaixo'}
-        #     }
-    #    }
-        'real': {
+        'previsao': {
             'acima': {
                 'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'},
                 'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
+#                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
             },
-        #     'abaixo': {
-        #         'Pressão do Óleo': {'tipo': 'real', 'condicao': 'abaixo'}
-        #     }
+            'abaixo': {
+                'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'},
+                'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
+                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'},
+                'RPM': {'tipo': 'real', 'condicao': 'acima'}
+            }
         }
     },
     'Pressão do Óleo': {
-        # 'previsao': {
-        #     'acima': {
-        #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
-        #         'Temperatura da Água': {'tipo': 'previsao', 'condicao': 'acima'}
-        #     },
-        #     'abaixo': {
-        #         'Load Speed': {'tipo': 'real', 'condicao': 'acima'},
-        #         'Temperatura da Água': {'tipo': 'previsao', 'condicao': 'abaixo'}
-        #      }
-        # },
         'real': {
-        #     'acima': {
-        #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
-        #         'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
-        #     },
             'abaixo': {
                 'Pressão de admissão': {'tipo': 'real', 'condicao': 'acima'},
-#                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
-                },
-        #     'abaixo': {
-        #         'Load Speed': {'tipo': 'previsao', 'condicao': 'acima'},
-        # #        'Temperatura da Água': {'tipo': 'real', 'condicao': 'abaixo'}
-        #     }
+                'Temperatura da Água': {'tipo': 'real', 'condicao': 'acima'}
+            }
         }
     },
     'Temperatura da Água': {
-        # 'previsao': {
-        #     'acima': {
-        #         'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
-        #     },
-        #     'abaixo': {
-        #         'Potência Ativa': {'tipo': 'real', 'condicao': 'abaixo'}
-        #     }
-        # },
         'real': {
             'acima': {
                 'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
@@ -8821,14 +10910,6 @@ lista_parametros_previsao = {
         }
     },
     'Temperatura do ar de admissão': {
-        # 'previsao': {
-        #     'acima': {
-        #         'Potência Ativa': {'tipo': 'real', 'condicao': 'acima'}
-        #     },
-        #     'abaixo': {
-        #         'RPM': {'tipo': 'real', 'condicao': 'abaixo'}
-        #     }
-        # },
         'real': {
             'acima': {
                 'RPM': {'tipo': 'real', 'condicao': 'acima'}
@@ -8852,10 +10933,20 @@ lista_parametros_previsao = {
 
 
 
+equipamentos_alertados = []  # Lista para armazenar equipamentos que já foram alertados
+usinas_alertadas = {}  # Dicionário para armazenar usinas e os equipamentos em alerta
+usinas_enviadas = set()  # Conjunto para rastrear usinas que já foram alertadas
+    
 async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados, pool):
-    equipamentos_alertados = []  # Lista para armazenar equipamentos que já foram alertados
-    usinas_alertadas = {}  # Dicionário para armazenar usinas e os equipamentos em alerta
-    usinas_enviadas = set()  # Conjunto para rastrear usinas que já foram alertadas
+    
+    # equipamentos_alertados = []  # Lista para armazenar equipamentos que já foram alertados
+    # usinas_alertadas = {}  # Dicionário para armazenar usinas e os equipamentos em alerta
+    # usinas_enviadas = set()  # Conjunto para rastrear usinas que já foram alertadas
+
+    global equipamentos_alertados
+    global usinas_alertadas
+    global usinas_enviadas
+    
     contagem_ativos_por_usina = {}
     usuarios_bloqueados = set()
 
@@ -8875,9 +10966,6 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                 await carregar_equipamentos_ativos(pool)
                 await carregar_parametros_min_max(pool)
 
-            await carregar_equipamentos_ativos(pool)
-            await carregar_parametros_min_max(pool)
-
         except Exception as e:
             print(f"Erro ao processar novo_enviar_previsao_valor_equipamento_alerta_novo equipamento {cod_equipamento}: {str(e)}")
 
@@ -8887,20 +10975,95 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                     await conn.ping(reconnect=True)  # Forçar reconexão
                     async with conn.cursor() as cursor:
 
+                        await cursor.execute("""
+                            SELECT lc.data_cadastro AS data_consecutivas, sg.data_cadastro AS data_leituras
+                            FROM leituras_consecutivas lc
+                            JOIN sup_geral.leituras sg ON lc.cod_equipamento = sg.cod_equipamento
+                            WHERE lc.cod_equipamento = %s
+                            ORDER BY sg.data_cadastro DESC, lc.data_cadastro DESC
+                            LIMIT 1
+                        """, (int(cod_equipamento),))
+
+                        result = await cursor.fetchone()
+
+                        # Verificar se os dados foram retornados
+                        if result:
+                            data_cadastro_consecutivas, data_cadastro_leituras = result
+
+                            # Se o timestamp de leituras for mais recente
+                            if data_cadastro_leituras >= data_cadastro_consecutivas:
+                                agora = datetime.now()
+                                
+                                # Verificar se já passou mais de uma hora desde a última leitura consecutiva
+                                if agora - data_cadastro_consecutivas > timedelta(hours=5):
+                                    await cursor.execute("""
+                                        UPDATE machine_learning.leituras_consecutivas
+                                        SET alerta = 0
+                                        WHERE cod_equipamento = %s AND alerta = 1
+                                    """, (int(cod_equipamento),))
+                                    await conn.commit()
+                        #            print(f"Equipamento {cod_equipamento}: alerta setado para 0, mais de 5 horas sem atualização em novo_enviar_previsao_valor_equipamento_alerta_novo.")
+
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 114 AND cod_equipamento = %s", (cod_equipamento,))
                         valores_atuais_114 = await cursor.fetchone()
                                         
                         if valores_atuais_114 is None:
                             continue
 
+                        # # Verifica se todos os valores são 0
+                        # if all(valor == 0 for valor in valores_atuais_114):
+                        #     if cod_equipamento in equipamentos_alertados:
+                        #         # Remove o equipamento da lista se já foi alertado e todos os valores são 0
+                        #         equipamentos_alertados.remove(cod_equipamento)
+                        #         print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
+                                
+                        #         # Remove o equipamento da contagem de ativos na usina
+                        #         await cursor.execute(
+                        #             "SELECT cod_usina FROM sup_geral.equipamentos WHERE codigo = %s",
+                        #             (cod_equipamento,)
+                        #         )
+                        #         resultado_usina = await cursor.fetchone()
+                        #         if resultado_usina:
+                        #             cod_usina = resultado_usina[0]
+                        #             if cod_usina in contagem_ativos_por_usina:
+                        #                 contagem_ativos_por_usina[cod_usina] -= 1
+                        #                 if contagem_ativos_por_usina[cod_usina] <= 0:
+                        #                     del contagem_ativos_por_usina[cod_usina]
+                        #                     print(f"Usina {cod_usina} removida da contagem de ativos pois todos os equipamentos estão com valores zero.")
+                        #     continue
+
                         # Verifica se todos os valores são 0
                         if all(valor == 0 for valor in valores_atuais_114):
-                            if cod_equipamento in equipamentos_alertados:
+                            if cod_equipamento in [equip['cod_equipamento'] for equip in equipamentos_alertados]:
                                 # Remove o equipamento da lista se já foi alertado e todos os valores são 0
-                                equipamentos_alertados.remove(cod_equipamento)
+                                equipamentos_alertados = [
+                                    equip for equip in equipamentos_alertados if equip['cod_equipamento'] != cod_equipamento
+                                ]
+
+                                await cursor.execute("""
+                                    UPDATE machine_learning.leituras_consecutivas
+                                    SET alerta = 0
+                                    WHERE cod_equipamento = %s
+                                """, (int(cod_equipamento),))
+                                await conn.commit()
+
                                 print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
-                                
-                                # Remove o equipamento da contagem de ativos na usina
+
+                                # cod_usina = next(
+                                #     (equip['cod_usina'] for equip in equipamentos_alertados if equip['cod_equipamento'] == cod_equipamento),
+                                #     None
+                                # )
+                                # print(cod_usina,'dentro do loop novo')
+                                # print('contagem_ativos_por_usina',contagem_ativos_por_usina)
+                                # if cod_usina:
+                                #     if cod_usina in contagem_ativos_por_usina:
+                                #         contagem_ativos_por_usina[cod_usina] -= 1
+                                #         if contagem_ativos_por_usina[cod_usina] <= 0:
+                                #             del contagem_ativos_por_usina[cod_usina]
+                                #             print(f"Usina {cod_usina} removida da contagem de ativos pois todos os equipamentos estão com valores zero.")
+                                            
+
+                                # Atualizar a contagem de ativos por usina
                                 await cursor.execute(
                                     "SELECT cod_usina FROM sup_geral.equipamentos WHERE codigo = %s",
                                     (cod_equipamento,)
@@ -8908,13 +11071,15 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                 resultado_usina = await cursor.fetchone()
                                 if resultado_usina:
                                     cod_usina = resultado_usina[0]
+                                    print(resultado_usina,'dentro do loop novo')
                                     if cod_usina in contagem_ativos_por_usina:
                                         contagem_ativos_por_usina[cod_usina] -= 1
                                         if contagem_ativos_por_usina[cod_usina] <= 0:
                                             del contagem_ativos_por_usina[cod_usina]
                                             print(f"Usina {cod_usina} removida da contagem de ativos pois todos os equipamentos estão com valores zero.")
+                    
                             continue
-
+                        
                         # Obter o valor de cod_campo 3
                         await cursor.execute("SELECT valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas WHERE cod_campo = 3 AND cod_equipamento = %s", (cod_equipamento,))
                         valores_atuais_3 = await cursor.fetchone()
@@ -8996,11 +11161,11 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                             #        print("(loop 1) A usina ",cod_usina, " Esta ativa? ",usina_ativa_row,' para o usuario ',cod_usuario)
 
                                                     if usina_ativa_row and usina_ativa_row[0] == 1:
-                                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
+                                                        await cursor.execute("SELECT id_telegram, usuario, ativo, telefone, somente_telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = %s", (cod_usuario,))
                                                         result = await cursor.fetchone()
                                                         
                                                         if result:
-                                                            id_telegram, nome_usuario, ativo, telefone = result
+                                                            id_telegram, nome_usuario, ativo, telefone, somente_telefone = result
                                                             if ativo == 1:
                                                                 try:
                                                                 #    nomes_usuarios.append(nome_usuario)
@@ -9018,73 +11183,111 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                                                                     usinas_enviadas.add(cod_usina)  # Marca a usina como já alertada
 
-                                                                    if cod_modelo_funcionamento not in [4, 12, 14]:
+                                                                    if cod_modelo_funcionamento in [4, 12, 14]:
 
                                                                         nomes_usuarios.append(nome_usuario)
-                                                                        
-                                                                        # Constrói a mensagem com os equipamentos e as mensagens de alerta
-                                                                        mensagem = (
-                                                                            f"🔴 <b>ALERTA!</b> \n\nUsina: {cod_usina} - {nome_usina}\n"
-                                                                            f"Equipamentos em alerta: {', '.join(str(equip) for equip in equipamentos_alertados)}\n"
-                                                                        )
 
-                                                                        # Adiciona as mensagens de alerta, se disponíveis
-                                                                        if mensagens_alertas:
-                                                                            mensagem += "\nMensagens de Alerta:\n" + "\n".join(f"- {msg}" for msg in mensagens_alertas)
+                                                                        if somente_telefone == 0:
 
-                                                                        mensagem += (
-                                                                            f'\n<a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para a usina</a>'
-                                                                        )
+                                                                            # Verificar se há mensagens de alerta na lista
+                                                                            if mensagens_alertas:
+                                                                                # Mensagens originais
+                                                                                texto_alertas = "\n".join(f"- {msg}" for msg in mensagens_alertas)
 
-                                                                        # Envia a mensagem formatada
-                                                                        await bot.send_message(id_telegram, mensagem, parse_mode='HTML')
+                                                                                # Mensagens formatadas
+                                                                                mensagens_formatadas = []
+                                                                                for mensagem in mensagens_alertas:
+                                                                                    # Substituir <b> por ** e </b> por **
+                                                                                    mensagem = re.sub(r"<b>(.*?)</b>", r"*\1*", mensagem)
 
+                                                                                    # Remover linhas que contenham <a> tags
+                                                                                    mensagem = re.sub(r"<a.*?>.*?</a>", "", mensagem)
 
-                                                                        print('inicio do payload previsao novo')
+                                                                                    # Adicionar a mensagem formatada à lista
+                                                                                    mensagens_formatadas.append(mensagem.strip())
 
-                                                                        # Executa a consulta no banco
-                                                                    #    await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
-                                                                        # Retorna um único registro como tupla
-                                                                    #    telefone = await cursor.fetchone()
-
-                                                                        # Extrai o valor da tupla
-                                                                        if telefone:  # Verifica se telefone não é None
-
-                                                                            # Se o telefone é uma tupla, pega o primeiro elemento
-                                                                            if isinstance(telefone, tuple):
-                                                                                telefone = telefone[0]        
-                                                                                                                                                      
-                                                                            telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
-                                                                            if not telefone_formatado.startswith("+"):
-                                                                                telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
-
-                                                                            # Monta a mensagem
-                                                                            mensagem_final_wtss = (
-                                                                                f"🟡 ALERTA! \n\n"
-                                                                                f"Usina: {cod_usina} - {nome_usina}\n"
-                                                                    #            f"Ir para o equipamento: https://supervisorio.brggeradores.com.br/beta/detalhesgmg.php?codUsina={cod_usina}&codEquip={cod_equipamento}\n\n"
-                                                                                f"Equipamento: {cod_equipamento} ({nome_equipamento})\n"
-                                                                                f"Previsão para {chave_principal} acima do limite.\n"
-                                                                                f"Valores reais: {valores_reais_formatados}\n"
-                                                                                f"Valores previstos: {valores_previstos_formatados}\n\n"
-                                                                                f"Parâmetros fora do padrão: {', '.join(condicoes_acima)}\n"
-                                                                                f"Valores reais: {valores_reais_subparametro}\n"
-                                                                                f"Valores previstos: {valores_previstos_subparametro}\n"
+                                                                                texto_alertas_formatada = "\n".join(f"- {msg}" for msg in mensagens_formatadas if msg)
+                                                                            else:
+                                                                                texto_alertas = "Nenhum alerta específico encontrado."
+                                                                                texto_alertas_formatada = "Nenhum alerta específico encontrado."
+                                                                                
+                                                                            # Constrói a mensagem com os equipamentos e as mensagens de alerta
+                                                                            mensagem = (
+                                                                                f"🟡🔴 *ALERTA!* \n\n"
+                                                                                f"{texto_alertas}\n\n"
                                                                             )
 
-                                                                            # Monta o payload
-                                                                            payload = {
-                                                                                "number": telefone_formatado,
-                                                                                "textMessage": {
-                                                                                    "text": mensagem_final_wtss
-                                                                                }
-                                                                            }
-                                                                        else:
-                                                                            print("Nenhum telefone encontrado para o usuário.")
+                                                                            # Envia a mensagem formatada
+                                                                            await bot.send_message(id_telegram, mensagem, parse_mode='HTML')
 
-                                                                        start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                                                        print('payload',payload)
-                                                                        print('fim do payload previsao novo')
+                                                                        if somente_telefone == 1:
+
+                                                                            print('inicio do payload previsao novo')
+
+                                                                            # Se o telefone for uma tupla, extrai o primeiro elemento
+                                                                            if isinstance(telefone, tuple):
+                                                                                telefone = telefone[0]
+
+                                                                            # Verifica se o telefone não está vazio ou None
+                                                                            if telefone:
+                                                                                # Garante que telefone seja uma string para manipulação
+                                                                                telefone = str(telefone).strip()
+
+                                                                                # Remove espaços, traços e outros caracteres desnecessários
+                                                                                telefone_formatado = telefone.replace(" ", "").replace("-", "")
+
+                                                                                # Adiciona o prefixo "+" se não estiver presente
+                                                                                if not telefone_formatado.startswith("+"):
+                                                                                    telefone_formatado = f"+{telefone_formatado}"
+
+                                                                                # Validação básica do número de telefone
+                                                                                if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
+                                                                    
+                                                                                    # Verificar se há mensagens de alerta na lista
+                                                                                    if mensagens_alertas:
+                                                                                        # Mensagens originais
+                                                                                        texto_alertas = "\n".join(f"- {msg}" for msg in mensagens_alertas)
+
+                                                                                        # Mensagens formatadas
+                                                                                        mensagens_formatadas = []
+                                                                                        for mensagem in mensagens_alertas:
+                                                                                            # Substituir <b> por ** e </b> por **
+                                                                                            mensagem = re.sub(r"<b>(.*?)</b>", r"*\1*", mensagem)
+
+                                                                                            # Remover linhas que contenham <a> tags
+                                                                                            mensagem = re.sub(r"<a.*?>.*?</a>", "", mensagem)
+
+                                                                                            # Adicionar a mensagem formatada à lista
+                                                                                            mensagens_formatadas.append(mensagem.strip())
+
+                                                                                        texto_alertas_formatada = "\n".join(f"- {msg}" for msg in mensagens_formatadas if msg)
+                                                                                    else:
+                                                                                        texto_alertas = "Nenhum alerta específico encontrado."
+                                                                                        texto_alertas_formatada = "Nenhum alerta específico encontrado."
+
+                                                                                    
+                                                                                    # Monta a mensagem
+                                                                                    mensagem_final_wtss = (
+                                                                                        f"🟡🔴 *ALERTA!* \n\n"
+                                                                                        f"Usina: {cod_usina} - {nome_usina}\n"
+                                                                                        f"Equipamento: {cod_equipamento}\n"
+                                                                                        f"{texto_alertas_formatada}\n\n"
+                                                                                    )
+
+                                                                                    # Monta o payload
+                                                                                    payload = {
+                                                                                        "number": telefone_formatado,
+                                                                                        "textMessage": {
+                                                                                            "text": mensagem_final_wtss
+                                                                                        }
+                                                                                    }
+
+                                                                                    start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                                                    print('payload',payload)
+                                                                            else:
+                                                                                print("Nenhum telefone encontrado para o usuário.")
+
+                                                                            print('fim do payload previsao novo')
                                                 
                                                 
                                                                     else:                                                                    
@@ -9112,9 +11315,26 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                                             # Verificar se há mensagens de alerta na lista
                                             if mensagens_alertas:
+                                                # Mensagens originais
                                                 texto_alertas = "\n".join(f"- {msg}" for msg in mensagens_alertas)
+
+                                                # Mensagens formatadas
+                                                mensagens_formatadas = []
+                                                for mensagem in mensagens_alertas:
+                                                    # Substituir <b> por ** e </b> por **
+                                                    mensagem = re.sub(r"<b>(.*?)</b>", r"*\1*", mensagem)
+
+                                                    # Remover linhas que contenham <a> tags
+                                                    mensagem = re.sub(r"<a.*?>.*?</a>", "", mensagem)
+
+                                                    # Adicionar a mensagem formatada à lista
+                                                    mensagens_formatadas.append(mensagem.strip())
+
+                                                texto_alertas_formatada = "\n".join(f"- {msg}" for msg in mensagens_formatadas if msg)
                                             else:
                                                 texto_alertas = "Nenhum alerta específico encontrado."
+                                                texto_alertas_formatada = "Nenhum alerta específico encontrado."
+
 
                                             # Montar a mensagem de alerta para o grupo
                                             mensagem_alerta_grupo = (
@@ -9122,12 +11342,53 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                 f"<b>Usuários Notificados:</b> {nomes_usuarios_str}\n\n"
                                                 f"Equipamento: {cod_equipamento}\n"
                                                 f"{texto_alertas}\n\n"
-                                                f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para a usina</a>'
+                                            #    f'<a href="https://supervisorio.brggeradores.com.br/beta/detalhesusinaover.php?codUsina={cod_usina}">Ir para a usina</a>'
                                             )
 
                                             # Enviar a mensagem
                                             await bot.send_message(id_grupo, mensagem_alerta_grupo, parse_mode='HTML')
 
+                                            '''
+                                            # Executa a consulta no banco
+                                            await cursor.execute("SELECT telefone FROM machine_learning.usuarios_telegram WHERE cod_usuario = 374")
+                                            # Retorna um único registro como tupla
+                                            telefone = await cursor.fetchone()
+
+                                            # Extrai o valor da tupla
+                                            if telefone:  # Verifica se telefone não é None
+
+                                                # Se o telefone é uma tupla, pega o primeiro elemento
+                                                if isinstance(telefone, tuple):
+                                                    telefone = telefone[0]        
+                                                                                                                            
+                                                telefone_formatado = telefone.strip().replace(" ", "").replace("-", "")  # Formata o telefone
+                                                if not telefone_formatado.startswith("+"):
+                                                    telefone_formatado = f"+{telefone_formatado}"  # Adiciona o "+" no início, se necessário
+
+                                                # Monta a mensagem
+                                                mensagem_final_wtss = (
+                                                    f"🟡🔴 *ALERTA!* \n\n"
+                                                    f"<b>Usuários Notificados:</b> {nomes_usuarios_str}\n\n"
+                                                    f"{texto_alertas_formatada}\n\n"
+                                                )
+
+                                                # Monta o payload
+                                                payload = {
+                                                    "number": telefone_formatado,
+                                                    "textMessage": {
+                                                        "text": mensagem_final_wtss
+                                                    }
+                                                }
+
+                                                start_chat(payload)  # Chama a função para enviar via WhatsApp
+                                                print('payload',payload)
+                                            else:
+                                                print("Nenhum telefone encontrado para o usuário.")
+
+                                            print('fim do payload previsao novo')
+                                            
+                                            '''
+                                                
                                             nomes_usuarios.clear()
                                             sys.stdout.flush()
                             continue
@@ -9135,30 +11396,32 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                         # Função para fazer previsões e obter as contagens
                         nome_equipamento, nome_usina, cod_usina, valores_atuais, previsoes, contagem_abaixo_do_limite, contagem_acima_do_limite, contagem_abaixo_do_limite_previsao, contagem_acima_do_limite_previsao, contagem_equipamentos_ativos = await novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool)
-                #        print('cod_equipamento',cod_equipamento,'nome_equipamento',nome_equipamento,'contagem_equipamentos_ativos',contagem_equipamentos_ativos)
                         
                         if previsoes is None or contagem_abaixo_do_limite is None or contagem_acima_do_limite is None:
                             continue
-                #        print('cod_equipamento',cod_equipamento,'passou o if previsoes')
+
+
+
+
 
                         # Verificar as condições com base no dicionário lista_parametros_previsao
                         for chave_principal, condicoes in lista_parametros_previsao.items():
                 #            print('chave_principal 1',chave_principal)
                 #            print('condicoes 1',condicoes)
 
-                            # if chave_principal == "Load Speed":
-                            #     # Obter o valor atual de 'Load Speed'
-                            #     load_speed_value = valores_atuais.get("Load Speed", 0)
+                            if chave_principal == "Load Speed":
+                                # Obter o valor atual de 'Load Speed'
+                                load_speed_value = valores_atuais.get("Load Speed", 0)
 
-                            #     # Se o valor for uma lista, pegue o ultimo elemento, senão use o valor diretamente
-                            #     if isinstance(load_speed_value, list):
-                            #         load_speed_value = load_speed_value[4] if load_speed_value else 0
+                                # Se o valor for uma lista, pegue o ultimo elemento, senão use o valor diretamente
+                                if isinstance(load_speed_value, list):
+                                    load_speed_value = load_speed_value[4] if load_speed_value else 0
 
-                            #     # Verifica se o valor atual de 'Load Speed' está acima de 50
-                            #     if load_speed_value < 50:
-                            #         print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
-                            #         # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
-                            #         continue
+                                # Verifica se o valor atual de 'Load Speed' está acima de 50
+                                if load_speed_value < 50:
+                                    print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
+                                    # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
+                                    continue
 
 
                             if chave_principal in previsoes:
@@ -9181,7 +11444,8 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                         # Verificar 'acima do limite'
                                         if contagem_acima.get(chave_principal, 0) == 1:
                                             condicoes_acima = condicoes[tipo_chave_principal].get('acima', {})
-                                            
+                                            print(f"Condições 'acima': {condicoes_acima}")
+
                                             if not condicoes_acima:  # Verifica se condicoes_acima está vazio
                                                 valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
                                                 valores_previstos_formatados = ', '.join(map(str, previsoes.get(chave_principal, ['N/A'])))
@@ -9229,12 +11493,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                                 elif tipo == 'previsao':
@@ -9243,12 +11507,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                             if todos_parametros_ok:
@@ -9310,12 +11574,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                                 elif tipo == 'previsao':
@@ -9324,12 +11588,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                                        #                print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                             if todos_parametros_ok:
@@ -9385,7 +11649,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                             else:
     #                            print('sem chave principal',chave_principal)
                                 pass
-                                
+
             except Exception as e:
                 print(f"Erro ao processar novo_enviar_previsao_valor_equipamento_alerta_novo equipamento {cod_equipamento}: {str(e)}")
 
@@ -9415,17 +11679,18 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
 ############################################### inicio atualizar tabelas de quebras ########################################################################################################
 
-async def adicionar_DataQuebra_FG(pool):  
+async def adicionar_DataQuebra_FG(pool):  # Funçao para passar data_cadastro_quebra/valores_previsão para data_cadastro/falhas_gerais
+    
     tamanho_lote = 1000000
     valor_offset = 0
     
     while True:
-        print('Iniciando processamento de data_cadastro_quebra para tabela falhas gerais...')
+    #    print('Iniciando data_cadastro_quebra para tabela falhas gerais formatada como data_cadastro')
         try:
             async with pool.acquire() as conn:    
                 await conn.ping(reconnect=True)  # Forçar reconexão
                 async with conn.cursor() as cursor:
-                    # Selecionar linhas
+                    # Preparar a consulta SQL para selecionar linhas
                     await cursor.execute("""
                         SELECT 
                             vp.cod_equipamento, 
@@ -9455,7 +11720,7 @@ async def adicionar_DataQuebra_FG(pool):
                                     '(259,)', '(262,)', '(265,)', '(269,)', '(272,)', 
                                     '(273,)', '(279,)', '(280,)', '(281,)', '(301,)', 
                                     '(304,)', '(350,)', '(351,)', '(352,)', '(353,)', 
-                                    '(356,)', '(357,)', '(381,)', '(383,)', '(384,)', 
+                                    '(356,)', '(357,)', '(381,)', '(384,)', 
                                     '(385,)', '(386,)', '(387,)', '(388,)', '(389,)', 
                                     '(390,)', '(400,)', '(401,)', '(404,)', '(405,)', 
                                     '(411,)', '(412,)', '(413,)', '(414,)', '(415,)', 
@@ -9474,31 +11739,233 @@ async def adicionar_DataQuebra_FG(pool):
 
                     linhas = await cursor.fetchall()
                     if not linhas:
-                        await asyncio.sleep(2)
-                    else:
-                        # Inserir as linhas na tabela falhas_gerais
-                        for linha in linhas:
-                            cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = linha
-
-                            await cursor.execute("""
-                                INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80, alerta_100, previsao))
-
-                        #    print(f'Inserido registro para falha em equipamento {cod_equipamento}, cod_usina {cod_usina}, na data {data_cadastro_quebra} com alertas {alerta_80}, {alerta_100}, {previsao}.')
-
-                        await conn.commit()
-                    #    print('Inserções concluídas com sucesso.')
+                    #    print('Pedro, Nenhum registro encontrado. Saindo do loop.')
+                        await asyncio.sleep(2)  
+                        continue
                     
-                    # Atualizar o offset
+                
+                    # Inserir as linhas selecionadas na tabela falhas_gerais
+                    for linha in linhas:
+                        cod_equipamento, cod_usina, data_cadastro_quebra, alerta_80, alerta_100, previsao = linha
+
+                        await cursor.execute("""
+                            INSERT INTO machine_learning.falhas_gerais (cod_equipamento, cod_usina, data_cadastro, falha, alerta_80, alerta_100, previsao)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """, (cod_equipamento, cod_usina, data_cadastro_quebra, 1, alerta_80, alerta_100, previsao))
+
+                        print(f'Inserido registro para falha 1 em equipamento {cod_equipamento}, cod_usina {cod_usina}, na data {data_cadastro_quebra} com alertas {alerta_80},{alerta_100},{previsao} na tabela falhas_gerais.')
+
+                    await conn.commit()
+                    print('Transação de dados pelas planilhas valores_previsto e falhas_gerais feitas com sucesso')
+                    # Atualizar o offset para o próximo lote
                     valor_offset += tamanho_lote
+        except:
 
+            await asyncio.sleep(3600)
+
+async def novo_cod_usina(pool):
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("SELECT codigo FROM sup_geral.usinas WHERE ativo = 1")
+            cod_usinass = await cursor.fetchall()
+            cod_usinas = [codigo for (codigo,) in cod_usinass]
+            return cod_usinas
+
+async def novo_buscar_cod_equipamentos(cod, pool):
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("""
+            SELECT codigo FROM sup_geral.equipamentos
+            WHERE cod_usina = %s
+            AND ativo = 1
+            and cod_tipo_equipamento IN (1, 3, 4, 12, 16, 18, 20, 22, 23, 27, 29, 33, 37, 40, 41, 43, 51, 55, 56)
+            """, (cod,))
+            equipamentoss = await cursor.fetchall()
+            equipamentos = [codigo for (codigo,) in equipamentoss]
+            #print(f"\nUsina {cod}: Equipamentos ativos: {equipamentos}\n")
+            return equipamentos
+
+async def Energia_Equipamento(pool, buscar_cod_equipamento, cod):
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cursor:
+            await cursor.execute("""
+                SELECT dia, cod_equipamento
+                FROM machine_learning.Geracao_diaria
+            """)
+            registros_existentes = {(row[0], row[1]) for row in await cursor.fetchall()}
+
+            await cursor.execute("""
+                SELECT
+                    r.dia,
+                    r.cod_equipamento,
+                    e.cod_usina,
+                    r.energia AS energia_final,
+                    IFNULL((SELECT energia FROM sup_geral.relatorio_por_gerador
+                            WHERE cod_equipamento = r.cod_equipamento
+                            AND dia < r.dia
+                            ORDER BY dia DESC
+                            LIMIT 1), 0) AS energia_inicial,
+                    r.energia - IFNULL((SELECT energia FROM sup_geral.relatorio_por_gerador
+                                        WHERE cod_equipamento = r.cod_equipamento
+                                        AND dia < r.dia
+                                        ORDER BY dia DESC
+                                        LIMIT 1), 0) AS energia_dia,
+
+                    r.combustivel AS combustivel_final,
+                    IFNULL((SELECT combustivel FROM sup_geral.relatorio_por_gerador
+                            WHERE cod_equipamento = r.cod_equipamento
+                            AND dia < r.dia
+                            ORDER BY dia DESC
+                            LIMIT 1), 0) AS combustivel_inicial,
+                    r.combustivel - IFNULL((SELECT combustivel FROM sup_geral.relatorio_por_gerador
+                                            WHERE cod_equipamento = r.cod_equipamento
+                                            AND dia < r.dia
+                                            ORDER BY dia DESC
+                                            LIMIT 1), 0) AS combustivel_dia,
+
+                    r.horimetro AS horimetro_final,
+                    IFNULL((SELECT horimetro FROM sup_geral.relatorio_por_gerador
+                            WHERE cod_equipamento = r.cod_equipamento
+                            AND dia < r.dia
+                            ORDER BY dia DESC
+                            LIMIT 1), 0) AS horimetro_inicial,
+                    r.horimetro - IFNULL((SELECT horimetro FROM sup_geral.relatorio_por_gerador
+                                        WHERE cod_equipamento = r.cod_equipamento
+                                        AND dia < r.dia
+                                        ORDER BY dia DESC
+                                        LIMIT 1), 0) AS horimetro_dia,
+                                        u.nome,
+                                        e.nome									
+                FROM
+                    sup_geral.relatorio_por_gerador r
+                LEFT JOIN
+                    sup_geral.equipamentos e ON r.cod_equipamento = e.codigo
+				LEFT JOIN 
+					sup_geral.usinas u ON e.cod_usina = u.codigo
+                WHERE
+                    YEAR(r.dia) = 2025  
+                    AND r.cod_equipamento = %s
+                    AND (r.energia - IFNULL((SELECT energia FROM sup_geral.relatorio_por_gerador
+                                            WHERE cod_equipamento = r.cod_equipamento
+                                            AND dia < r.dia
+                                            ORDER BY dia DESC
+                                            LIMIT 1), 0)) > 0  -- energia_dia > 0
+                    AND (r.combustivel - IFNULL((SELECT combustivel FROM sup_geral.relatorio_por_gerador
+                                                WHERE cod_equipamento = r.cod_equipamento
+                                                AND dia < r.dia
+                                                ORDER BY dia DESC
+                                                LIMIT 1), 0)) IS NOT NULL  -- combustivel_dia not null
+                    AND (r.combustivel - IFNULL((SELECT combustivel FROM sup_geral.relatorio_por_gerador
+                                                WHERE cod_equipamento = r.cod_equipamento
+                                                AND dia < r.dia
+                                                ORDER BY dia DESC
+                                                LIMIT 1), 0)) > 0
+                    AND (r.combustivel - IFNULL((SELECT combustivel FROM sup_geral.relatorio_por_gerador
+                                                WHERE cod_equipamento = r.cod_equipamento
+                                                AND dia < r.dia
+                                                ORDER BY dia DESC
+                                                LIMIT 1), 0)) < 3
+                    AND (r.horimetro - IFNULL((SELECT horimetro FROM sup_geral.relatorio_por_gerador
+                                            WHERE cod_equipamento = r.cod_equipamento
+                                            AND dia < r.dia
+                                            ORDER BY dia DESC
+                                            LIMIT 1), 0)) > 0
+                    AND (r.horimetro - IFNULL((SELECT horimetro FROM sup_geral.relatorio_por_gerador
+                                            WHERE cod_equipamento = r.cod_equipamento
+                                            AND dia < r.dia
+                                            ORDER BY dia DESC
+                                            LIMIT 1), 0)) < 35
+                                 """,(buscar_cod_equipamento,))
+
+            resultados =  await cursor.fetchall()
+            if resultados:
+                for resultado in resultados:
+                    dia, cod_equipamento, cod_usina, energia_final, energia_inicial, energia_dia, combustivel_final, combustivel_inicial, combustivel_total, horimetro_final, horimetro_inicial, horimetro_dia, nome_usina, nome_equipamento = resultado
+                    if (dia, cod_equipamento) not in registros_existentes:                                                                
+                        energia = int(energia_dia)
+                        combustivel_dia = combustivel_total * 1000 if combustivel_total is not None else 0
+                        combustivel = int(combustivel_dia)
+                        
+                        Consumo = combustivel_dia / energia_dia
+                        consumo_formatado = f"{Consumo:.3f}" 
+                        async with pool.acquire() as conn:
+                            async with conn.cursor() as cursor:
+                                await cursor.execute(""" 
+                                    INSERT INTO machine_learning.Geracao_diaria(dia, cod_equipamento, nome_equip, nome_usina, cod_usina,
+                                    energia_kWh, consumo_kL, consumo_L_kWh, funcionamento)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                """, (dia, buscar_cod_equipamento, nome_equipamento, nome_usina, cod_usina, energia, combustivel, consumo_formatado, horimetro_dia))
+                                await conn.commit()
+                                #print(f"Inserido Registro de geração para o Equipamento {buscar_cod_equipamento} e Usina {nome_usina} no dia {dia}")
+
+async def principal(pool):
+    async def agendar_energia_equipamentos():
+        """Executa Energia_Equipamento para todas as usinas e equipamentos às 07:15."""
+        while True:
+            now = datetime.now()
+            target_time = now.replace(hour=7, minute=00, second=00, microsecond=0)
+
+            if now > target_time:
+                target_time += timedelta(days=1)
+
+            wait_time = (target_time - now).total_seconds()
+            print(f"Aguardando até {target_time} para executar Energia_Equipamento.")
+            await asyncio.sleep(wait_time)
+
+            t = await novo_cod_usina(pool)
+            usinas_dados = {}
+            for cod in t:
+                #print(f"\n--------------- ATUALIZANDO USINA {cod} ---------------\n")
+
+                equipamentos = await novo_buscar_cod_equipamentos(cod, pool)
+                usinas_dados[cod] = {"equipamentos": equipamentos}
+
+                # Atualiza a energia para os equipamentos
+                for buscar_cod_equipamento in equipamentos:
+                    energia_equip = await Energia_Equipamento(pool, buscar_cod_equipamento, cod)
+                    usinas_dados[cod][buscar_cod_equipamento] = {
+                        "energia_equip": energia_equip,
+                    }
+                #print(f"\n--------------- FIM ATUALIZAÇÃO USINA {cod} ---------------\n")
+
+    await asyncio.gather(
+        agendar_energia_equipamentos() 
+    )
+
+
+async def atualizar_usinas_diariamente(pool):
+    # Conjunto de tabelas para atualizar
+    tabelas = [
+        "falhas_gerais",
+        "relatorio_quebras",
+        "log_relatorio_quebras",
+    ]
+
+    while True:
+        tempo_inicial = datetime.now()
+        data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
+        print(f"\n[{data_cadastro_formatada}] Início da atualização das tabelas de usinas.")
+
+        try:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    for tabela in tabelas:
+                        # Atualiza o campo `cod_usina` na tabela especificada
+                        query = f"""
+                        UPDATE machine_learning.{tabela} lrq
+                        JOIN sup_geral.equipamentos e
+                        ON lrq.cod_equipamento = e.codigo
+                        SET lrq.cod_usina = e.cod_usina
+                        """
+                        await cursor.execute(query)
+                        await conn.commit()
+                        print(f"Tabela {tabela} atualizada com sucesso.")
         except Exception as e:
-            print(f'Erro: {e}')
+            print(f"Ocorreu um erro ao atualizar as tabelas: {e}")
 
-        # Pausa para rodar a função novamente após 1 hora
-        print('Processamento concluído. Aguardando 1 hora para próxima execução...')
-        await asyncio.sleep(3600)
+        print(f"\n[{data_cadastro_formatada}] Atualização concluída. Próxima execução em 24 horas.")
+        await asyncio.sleep(86400)  # Aguarda 24 horas antes de executar novamente
+    
 
 
 
@@ -9509,6 +11976,7 @@ async def listar_tarefas_ativas():
     tasks = asyncio.all_tasks()
     for task in tasks:
         print(f"Tarefa: {task.get_name()} - Estado: {task._state}")
+
 
 
 
@@ -9629,8 +12097,14 @@ if __name__ == "__main__":
 
 
 
+import asyncio
 import subprocess
 import json
+
+# Variáveis para armazenar as tarefas em execução
+task_processos_menos_pesados = None
+task_botoes_prioritarios = None
+task_outros_processos = []
 
 # Inicializando o bot
 async def on_startup(dp: Dispatcher):
@@ -9641,38 +12115,62 @@ async def on_startup(dp: Dispatcher):
     cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
     cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
     cod_campo_especificados = ['3', '114']
-             
+
+
+    # Configuração do servidor FastAPI
+    config = Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
+    server = Server(config)
+
+    # Inicia o bot do Telegram e o FastAPI simultaneamente
+    telegram_task = asyncio.create_task(dp.start_polling())
+    fastapi_task = asyncio.create_task(server.serve())
+
+                 
     try:
         # Cancelar quaisquer tarefas remanescentes que não foram finalizadas
-        # for task in asyncio.all_tasks():
-        #     if task.get_name() in ["processos_menos_pesados"]:
-        #         task.cancel()
-        #         try:
-        #             await task
-        #         except asyncio.CancelledError:
-        #             print(f"Tarefa {task.get_name()} cancelada na inicialização.")
-        
+        for task in asyncio.all_tasks():
+            if task.get_name() in ["processos_menos_pesados"]:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    print(f"Tarefa {task.get_name()} cancelada na inicialização.")
+
         # Inicia os processos assíncronos sem travar o fluxo principal
-    #    asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
+        global task_processos_menos_pesados
+        if task_processos_menos_pesados is None or task_processos_menos_pesados.done():
+            task_processos_menos_pesados = asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
 
         # Iniciar processamento de botões prioritários
-        asyncio.create_task(processar_botoes_prioritarios())
-        
-        # Executa cada função pesada em seu próprio núcleo com JSON
-        subprocess.Popen(['taskset', '-c', '2', 'python3', '/home/bruno/codigos/processos_async_menos_pesados.py'])
-        subprocess.Popen(['taskset', '-c', '3', 'python3', '/home/bruno/codigos/monitorar_leituras_consecutivas.py'])
-        subprocess.Popen(['taskset', '-c', '4', 'python3', '/home/bruno/codigos/processar_equipamentos.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)])
-        subprocess.Popen(['taskset', '-c', '5', 'python3', '/home/bruno/codigos/enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)])
-        subprocess.Popen(['taskset', '-c', '6', 'python3', '/home/bruno/codigos/enviar_alerta.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)])
-        subprocess.Popen(['taskset', '-c', '7', 'python3', '/home/bruno/codigos/novo_enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)])
+        global task_botoes_prioritarios
+        if task_botoes_prioritarios is None or task_botoes_prioritarios.done():
+            task_botoes_prioritarios = asyncio.create_task(processar_botoes_prioritarios())
+
+
+        global task_outros_processos
+        processos = [
+            {'command': ['taskset', '-c', '2', 'python3', '/home/bruno/codigos/geracao_diaria.py'], 'task': None},
+        #    {'command': ['taskset', '-c', '3', 'python3', '/home/bruno/codigos/monitorar_leituras_consecutivas.py'], 'task': None},
+            {'command': ['taskset', '-c', '4', 'python3', '/home/bruno/codigos/processar_equipamentos.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)], 'task': None},
+            {'command': ['taskset', '-c', '5', 'python3', '/home/bruno/codigos/enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)], 'task': None},
+            {'command': ['taskset', '-c', '6', 'python3', '/home/bruno/codigos/enviar_alerta.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)], 'task': None},
+            {'command': ['taskset', '-c', '7', 'python3', '/home/bruno/codigos/novo_enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)], 'task': None},
+        ]
+
+        # Checar se algum dos processos já está em execução
+        for processo in processos:
+            if processo['task'] is None or processo['task'].done():
+                processo['task'] = subprocess.Popen(processo['command'])
+                print(f"Processo iniciado: {processo['command']}")
+
+        await asyncio.gather(telegram_task, fastapi_task)
 
     except Exception as e:
         print(f"Erro ao iniciar tarefas: {e}")
 
 
-
 # Limitar tarefas simultâneas com Semaphore
-async def processos_async_menos_pesados(dp: Dispatcher, limite_tarefas=5):
+async def processos_async_menos_pesados(dp: Dispatcher, limite_tarefas=7):
     semaforo = asyncio.Semaphore(limite_tarefas)
 
     async def tarefa_com_semaforo(func):
@@ -9685,41 +12183,20 @@ async def processos_async_menos_pesados(dp: Dispatcher, limite_tarefas=5):
     try:
         # Processos leves em paralelo, não interferem no fluxo principal
         tarefas = [
-        #    tarefa_com_semaforo(monitorar_leituras_consecutivas(dp.pool)),
-            tarefa_com_semaforo(verificar_alarmes(dp.pool)),
-            tarefa_com_semaforo(verificar_e_excluir_linhas_expiradas(dp.pool)),
+            tarefa_com_semaforo(monitorar_leituras_consecutivas(dp.pool)),
+            tarefa_com_semaforo(atualizar_usinas_diariamente(dp.pool)),
+            tarefa_com_semaforo(criar_tabelas(dp.pool)),
             tarefa_com_semaforo(clean_temp_files()),
             tarefa_com_semaforo(atualizar_usinas_usuario(dp.pool)),
             tarefa_com_semaforo(adicionar_DataQuebra_FG(dp.pool)),
-    #        tarefa_com_semaforo(monitor_log_file()),
+            tarefa_com_semaforo(verificar_alarmes(dp.pool)),
+            tarefa_com_semaforo(verificar_e_excluir_linhas_expiradas(dp.pool)),
         ]
         await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
     except asyncio.CancelledError:
         print("Tarefa de processos leves cancelada.")
     except Exception as e:
         print(f"Erro durante a execução dos processos leves: {e}")
-
-
-
-
-# Função para processos pesados
-async def processos_async_pesados(dp: Dispatcher):
-    
-    tabelas = 'sup_geral.leituras'
-    cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
-    cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
-    try:
-        # Processos pesados executando em segundo plano
-        tarefas = [
-        #    novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, tabelas, cod_campo_especificados_processar_equipamentos, dp.pool),
-        #    focar_alertas(cod_equipamentos, tabelas, cod_campo_especificados, dp.pool),
-        ]
-        await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
-    except asyncio.CancelledError:
-        print("Tarefa de processos pesados cancelada.")
-    except Exception as e:
-        print(f"Erro durante a execução dos processos pesados: {e}")
-
 
 
 # Criação de tabelas
@@ -9732,7 +12209,7 @@ async def criar_tabelas(pool):
     await criar_tabela_valores_previsao(pool)
     await criar_tabela_falhas_gerais(pool)
     await criar_tabela_usinas_usuario(pool)
- 
+
 
 async def on_shutdown(dp: Dispatcher):
     await close_db(dp.pool)
@@ -9741,9 +12218,131 @@ async def on_shutdown(dp: Dispatcher):
         dp.pool.close()
         await dp.pool.wait_closed()
 
+def signal_handler(sig, frame):
+    """Handler para capturar SIGINT e SIGTERM e encerrar as tarefas."""
+    print("Sinal de interrupção recebido, encerrando...")
+    for task in asyncio.all_tasks():
+        task.cancel()
+        
+
+# if __name__ == "__main__":
+#     # Iniciar o polling com os callbacks on_startup e on_shutdown
+#     executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown, skip_updates=True)
+
+import signal
 
 if __name__ == "__main__":
+    # Registrar manipuladores de sinal para encerrar as tarefas de forma limpa
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Iniciar o polling com os callbacks on_startup e on_shutdown
-    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown, skip_updates=True)
+    
+
+# import subprocess
+# import json
+# from teste import *  # Importa as funções de teste.py
 
 
+
+
+# # Inicializando o bot
+# async def on_startup(dp: Dispatcher):
+#     dp.pool = await create_pool()
+
+#     # Obtenha parâmetros necessários
+#     tabelas = 'sup_geral.leituras'
+#     cod_equipamentos = await obter_equipamentos_validos(tabelas, dp.pool)
+#     cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
+#     cod_campo_especificados = ['3', '114']
+             
+#     try:
+#         #Cancelar quaisquer tarefas remanescentes que não foram finalizadas
+#         for task in asyncio.all_tasks():
+#             if task.get_name() in ["processos_menos_pesados"]:
+#                 task.cancel()
+#                 try:
+#                     await task
+#                 except asyncio.CancelledError:
+#                     print(f"Tarefa {task.get_name()} cancelada na inicialização.")
+        
+#         # Inicia os processos assíncronos sem travar o fluxo principal
+#         asyncio.create_task(processos_async_menos_pesados(dp), name="processos_menos_pesados")
+
+#         # Iniciar processamento de botões prioritários
+#         asyncio.create_task(processar_botoes_prioritarios())
+        
+#         # Executa cada função pesada em seu próprio núcleo com JSON
+#     #    subprocess.Popen(['taskset', '-c', '2', 'python3', '/home/bruno/codigos/processos_leves.py'])
+
+#         subprocess.Popen(['taskset', '-c', '1,2,3', 'python3', '/home/bruno/codigos/teste.py'])
+#         subprocess.Popen(['taskset', '-c', '3', 'python3', '/home/bruno/codigos/monitorar_leituras_consecutivas.py'])
+#         subprocess.Popen(['taskset', '-c', '4', 'python3', '/home/bruno/codigos/processar_equipamentos.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)])
+#         subprocess.Popen(['taskset', '-c', '5', 'python3', '/home/bruno/codigos/enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)])
+#     #    subprocess.Popen(['taskset', '-c', '6', 'python3', '/home/bruno/codigos/enviar_alerta.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)])
+#         subprocess.Popen(['taskset', '-c', '7', 'python3', '/home/bruno/codigos/novo_enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)])
+
+#     except Exception as e:
+#         print(f"Erro ao iniciar tarefas: {e}")
+
+
+
+# # Limitar tarefas simultâneas com Semaphore
+# async def processos_async_menos_pesados(dp: Dispatcher, limite_tarefas=6):
+#     semaforo = asyncio.Semaphore(limite_tarefas)
+
+#     async def tarefa_com_semaforo(func):
+#         async with semaforo:
+#             try:
+#                 await func
+#             except Exception as e:
+#                 print(f"Erro na execução de {func.__name__}: {e}")
+
+#     try:
+#         # Processos leves em paralelo, não interferem no fluxo principal
+#         tarefas = [
+#         #    tarefa_com_semaforo(monitorar_leituras_consecutivas(dp.pool)),
+#             tarefa_com_semaforo(criar_tabelas(dp.pool)),
+#             tarefa_com_semaforo(clean_temp_files()),
+#             tarefa_com_semaforo(atualizar_usinas_usuario(dp.pool)),
+#             tarefa_com_semaforo(adicionar_DataQuebra_FG(dp.pool)),
+#             tarefa_com_semaforo(verificar_alarmes(dp.pool)),
+#             tarefa_com_semaforo(verificar_e_excluir_linhas_expiradas(dp.pool)),
+#     #        tarefa_com_semaforo(monitor_log_file()),
+#         ]
+#         await asyncio.gather(*tarefas)  # Aguarda todas as tarefas completarem
+#     except asyncio.CancelledError:
+#         print("Tarefa de processos leves cancelada.")
+#     except Exception as e:
+#         print(f"Erro durante a execução dos processos leves: {e}")
+
+
+# # Criação de tabelas
+# async def criar_tabelas(pool):
+#     await criar_tabela_usuarios_telegram(pool)
+#     await criar_tabela_relatorio_quebras(pool)
+#     await criar_tabela_log_relatorio_quebras(pool)
+#     await criar_tabela_silenciar_bot(pool)
+#     await criar_tabela_leituras(pool)
+#     await criar_tabela_valores_previsao(pool)
+#     await criar_tabela_falhas_gerais(pool)
+#     await criar_tabela_usinas_usuario(pool)
+ 
+
+# async def on_shutdown(dp: Dispatcher):
+#     await close_db(dp.pool)
+#     print("Fechando o pool de conexões...")
+#     if dp.pool is not None:
+#         dp.pool.close()
+#         await dp.pool.wait_closed()
+
+
+# if __name__ == "__main__":
+#     # Iniciar o polling com os callbacks on_startup e on_shutdown
+#     executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+
+
+# if __name__ == "__main__":
+#     print("Bot iniciado! Aguardando mensagens...")
+#     executor.start_polling(dp, skip_updates=True)

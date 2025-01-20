@@ -47,7 +47,7 @@ async def main():
     # Obtenha parâmetros necessários
     tabelas = 'sup_geral.leituras'
     cod_equipamentos = await obter_equipamentos_validos(tabelas, pool)
-    cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
+#    cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
     cod_campo_especificados = ['3', '114']
 
     await enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificados, pool)
