@@ -1911,7 +1911,7 @@ async def send_email(to_email, pdf_file_path, filename):
             hostname="smtp.gmail.com",
             port=587,
             username="zanellabruno7@gmail.com",
-            password="wron fcmr ugbj ufhb",
+            password="gdxd fgaz zwhx senn",
             use_tls=False
         )
     except Exception as e:
@@ -3191,16 +3191,17 @@ import magic
 import aiohttp
 
 
-# Obter a hora atual
 hora_atual = datetime.now().hour
 
-# Determinar o período do dia
 if 5 <= hora_atual < 12:
     periodo_do_dia = "Bom%20dia"
+    periodo = "Bom dia"
 elif 12 <= hora_atual < 18:
     periodo_do_dia = "Boa%20tarde"
+    periodo = "Boa tarde"
 else:
     periodo_do_dia = "Boa%20noite"
+    periodo = "Boa noite"
 
 app = FastAPI()
 
@@ -3377,11 +3378,11 @@ def split_text_into_chunks(texto_extraido, max_chunk_size=None):
     return chunks
 
 
-def generate_embeddings(chunks, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+def generate_embeddings(chunks, model_name="sentence-transformers/all-mpnet-base-v2"):
 
     model = SentenceTransformer(model_name)
 
-    embeddings = model.encode(chunks, convert_to_numpy=True)  # Passando diretamente a lista de chunks
+    embeddings = model.encode(chunks, convert_to_numpy=True)  
 
     return embeddings
 
@@ -3416,21 +3417,23 @@ except Exception as e:
 
 
 pdf_files = [
-#    r"/home/bruno/documentos_docling/Lista de Alarmes e Possíveis Causas.md",
-     r"/home/bruno/documentos/Alarmes e Possíveis Causas.pdf",
-    r"/home/bruno/documentos_docling/Parâmetros de Operação e Diagnóstico de Falhas.md",
-    r"/home/bruno/documentos_docling/Manual de manutenção e instalação - geradores a diesel BRG.md",
-    r"/home/bruno/documentos_docling/Manual de Operação - Geradores - COM  CGC 400.md",
-    r"/home/bruno/documentos_docling/Manual de Operação - Geradores - COM AGC 150.md",
-    r"/home/bruno/documentos_docling/47704191_BR Elétrico.md",
-    r"/home/bruno/documentos_docling/Alarmes do motor.md",
-    r"/home/bruno/documentos_docling/Apostila 3 - OK.md",
-    # r"/home/bruno/documentos_docling/Apostila 5 - normal.md",
-    # r"/home/bruno/documentos_docling/Apostila 6 - Gerado.md",
+    r"/home/bruno/documentos/Geral.md",
+
+#    r"/home/bruno/documentos/Alarmes_possiveis_causas.pdf",
+#    r"/home/bruno/documentos_docling/operacao_diagnostico_falhas.md",
+#    r"/home/bruno/documentos/manual_instalacao.pdf",
+#    r"/home/bruno/documentos/Manual_operacao_agc_400.pdf",
+#    r"/home/bruno/documentos/Manual_operacao_agc_150.pdf",
+#    r"/home/bruno/documentos_docling/47704191_BR.md",
+#    r"/home/bruno/documentos_docling/Alarmes_motor.md",
+
+#    r"/home/bruno/documentos_docling/manual_instalacao.md",
+#    r"/home/bruno/documentos_docling/Manual_operacao_agc_400.md",
+#    r"/home/bruno/documentos_docling/Manual_operacao_agc_150.md",
+#    r"/home/bruno/documentos_docling/Apostila_3.md",
 ]
 
 doc_id = 0
-
 
 for pdf_file in pdf_files:
     if os.path.exists(pdf_file):
@@ -3445,7 +3448,7 @@ for pdf_file in pdf_files:
                     continue
                 else:
                     text = extract_text_from_pdf(pdf_file)
-                    if "Alarmes e Possíveis Causas" in pdf_file:
+                    if "Alarmes_possiveis_causas" in pdf_file:
                         print("Fazendo chunk de Alarmes")
                         chunks = split_text_into_chunks(text)
                     elif "Gerado" in pdf_file:
@@ -3575,7 +3578,7 @@ historico_perguntas = deque(maxlen=5)
 historico_respostas = deque(maxlen=5)
 
 
-async def query_and_prompt(user_query, top_k=3, is_callback=False):
+async def query_and_prompt(user_query, is_callback=False):
 
     if not is_callback:
         Resposta_db = await Buscar_pergunta_LLM_bot(user_query)
@@ -3737,7 +3740,7 @@ async def descrever_imagem(image_path, image_caption):
     pergunta_LLM = chat_completion.choices[0].message.content 
     print(f"A pergunta feita pela API foi:\n{pergunta_LLM}")
     is_callback = True
-    resposta_bot_image = await query_and_prompt_whatsapp(pergunta_LLM, top_k=3,is_callback=is_callback)
+    resposta_bot_image = await query_and_prompt_whatsapp(pergunta_LLM,is_callback=is_callback)
     return pergunta_LLM, resposta_bot_image
 
 
@@ -3820,7 +3823,7 @@ async def handle_text_message(message: types.Message):
             user_query = message.text
 
         try:                
-            response = await query_and_prompt_whatsapp(user_query, top_k=3,is_callback=is_callback, id_user=user_id) 
+            response = await query_and_prompt_whatsapp(user_query,is_callback=is_callback, id_user=user_id) 
 
             async with pool.acquire() as conn:
                 async with conn.cursor() as cursor:
@@ -3990,7 +3993,7 @@ async def audio_for_text(message: types.Message):
             print(texto_extraido) 
 
         is_callback = True
-        response = await query_and_prompt_whatsapp(texto_extraido, top_k=3, is_callback=is_callback, id_user=id_user)
+        response = await query_and_prompt_whatsapp(texto_extraido, is_callback=is_callback, id_user=id_user)
         pool = dp.pool
 
         try:
@@ -4018,16 +4021,17 @@ async def audio_for_text(message: types.Message):
 
 
 
-historico_respostas = {}
 historico_perguntas = {}
+historico_respostas = {}
 
-async def query_and_prompt_whatsapp(user_query, top_k=3, is_callback=False, id_user=None):
-    
+async def query_and_prompt_whatsapp(user_query, is_callback=False, id_user=None):
+
     if not is_callback:
         Resposta_db = await Buscar_pergunta_LLM_bot(user_query)
         if Resposta_db:
             return Resposta_db
 
+    top_k = 4
     embedding = generate_embeddings([user_query])
     results = collection.query(
         query_embeddings=embedding,
@@ -4035,213 +4039,191 @@ async def query_and_prompt_whatsapp(user_query, top_k=3, is_callback=False, id_u
     )
 
     prompt = (
-        f'''
-        Seu nome é Spark ⚡. Não é necessário mencionar seu nome em todas as respostas, a menos que o usuário pergunte diretamente.
+        f"""
+        - Seu Nome é: Genny⚡. Você é uma LLM mulher que responde perguntas sobre Geradores e trabalha para BRG Geradores .
+        - Apresente-se apenas na primeira interação ou quando explicitamente solicitado
+        - Forneça respostas concisas, claras e informativas
+        - Responda de forma curta com base nos embeddings disponíveis ou no próprio prompt.
+        - Evite grandes textos pois o usuário precisa de praticidade.
+        - caso o embedding com a resposta correta seja grande dê uma breve resumida.
+        - Limite máximo de resposta: 1200 caracteres (excluindo links em href)
+        - Nunca use outro emoji além do raio ⚡.
+        - Sempre responda em Portugues brasil
 
-        ### **Comportamento Geral**  
-        1. **Clareza e Objetividade**:  
-        - Responda de forma curta, clara e informativa, com base nos documentos disponíveis.  
-        - Utilize o histórico de perguntas e respostas apenas se houver uma conexão explícita com a dúvida atual.  
-        - Nunca envie o histórico de perguntas e respostas aleatoriamente, nem sem a solicitação do usuário.  
+        Tratamento de Saudações
+            - Para mensagens que contém apenas saudação (ex: "bom dia", "boa tarde", "boa noite", "oi", "olá", "Como vai?"):
+            - Responda APENAS com "{periodo}, Como posso te ajudar?⚡" 
+            - NÃO busque informações adicionais
+            - NÃO mencione embeddings ou outras funcionalidades
+            - NÃO ofereça ajuda adicional
+            - Não utilize Históricos de Perguntas e respostas
 
-        2. **Saudações**:  
-        - Caso o usuário envie uma saudação, retribua educadamente.  
-        - Se a mensagem for apenas uma saudação, não inclua informações dos documentos ou o histórico.  
+        Diretrizes de Resposta
+            - Inicie as respostas diretamente - sem saudações ou introduções, exceto em mensagens de cumprimento
+            - Responda diretamente às dúvidas enviadas pelo usuário, sem introduzir '[Resposta: ...]' ou qualquer outra frase inicial.
+            - Formate valores numéricos com unidades apropriadas (bar, kPa, etc.)
+            - Use formatação markdown para melhor legibilidade.
+            - Mantenha as respostas focadas e relevantes à pergunta atual: {user_query}
+            - Você receberá {top_k} embeddings mais relevantes, extraídos dos PDFs da Empresa
+            - Esses embeddings contêm informações que podem ajudar a gerar uma resposta, mas ela pode estar tanto entre os embeddings quanto diretamente no prompt.
+            - Evite referências a PDFs, embeddings ou sistemas de arquivos
 
-        3. **Uso do Histórico**:  
-        - Utilize o histórico de perguntas e respostas para fundamentar suas respostas somente se for relevante para a pergunta atual.  
-        - Nunca envie o histórico completo sem solicitação explícita.  
+        Uso do Contexto(Historico de Perguntas e Respostas)
+            - Use o histórico da conversa apenas para:
+            - Perguntas de acompanhamento direto
+            - Solicitações explícitas de contexto anterior
+            - Continuação do mesmo tópico
+            - Nunca reutilize respostas anteriores para consultas não relacionadas
 
-        4. **Perguntas sobre Valores**:  
-        - Ao responder sobre valores, verifique se há a informação e forneça-a com a unidade ou grandeza associada.  
-        - Exemplo: "A pressão é 150 kPa."  
+        Localização das Empresas
+            - *BRG Geradores:* [BRG GERADORES](https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9)"
+            - *GRID Geradores:* [GRID GERADORES](https://maps.app.goo.gl/Pssputwd5syeTdw16)"
+            - *SDO BUSINESS:* [SDO BUSINESS](https://maps.app.goo.gl/FRrhnBG9f6HdhChf7)"
 
-        5. **Formato da Resposta**:  
-        - Sempre que possível, use Markdown para organizar suas respostas:  
-            - **Ênfase**: Use **negrito** ou _itálico_ para destacar informações importantes.  
-            - **Listas**: Utilize listas numeradas ou não ordenadas para estruturar conteúdos.  
-            - **Tabelas**: Apresente dados tabulados quando necessário.  
-            - **Citação de texto**: Use > para destacar trechos ou observações importantes.  
-            - **Bloco de código**: Formate trechos técnicos usando blocos de código.  
+        Produtos
+            - Motores da BRG Geradores começam com TWD e TAD são da Volvo e DC e D8 são da SCANIA.
+            - Alguns geradores tem motores da marca FPT e Perkins
+            - Ao responder sobre produtos, foque apenas nas séries mencionadas
+            - Período do dia atual: Utilize o valor de {periodo} para adaptar o tom das respostas. Exemplo: 'Bom dia', 'Boa tarde' ou 'Boa noite'.\n\n
+            Sobre Representantes:\n
+        Sobre Representantes:
+                    Quando o usuário mencionar algo relacionado a falar com um representante, siga as instruções abaixo:
+                    - Identifique a região do usuário com base na cidade mencionada.
+                    - Envie o link e o telefone do representante correspondente.
+                    - Inclua sempre o link do WhatsApp seguido por uma quebra de página e o telefone do representante.
+                    Envie nesse formato abaixo:
+                        - Você está no [região ou cidade] e busca um representante:
+                        - [região]: [Link do wpp]
+                        - Telefone: [número do representante]
+                    - *Sul ou Centro-Oeste:* [Ivan Felix](https://api.whatsapp.com/send?phone=5562998245318&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21)
+                        - Telefone: +55 (62) 9 9824-5318
+                    - *Sudeste:* [Sérgio Mota](https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21)
+                        - Telefone: +55 (62) 9 8117-1423
+                    - *Nordeste ou Parceiro Lew Geradores:* [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21)
+                        - Telefone: +55 (62) 9 9281-0643
+                    - *Norte:* [José Otávio](https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21)
+                        - Telefone: +55 (62) 9 8117-1407
+                    - *Fazendas:* [João Victor Lião](https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21)
+                        - Telefone: +55 (62) 9 9904-3154
 
-        6. **Foco na Relevância**:  
-        - Responda apenas com informações que estão diretamente relacionadas à pergunta ou disponíveis nos documentos.  
-        - Caso não saiba a resposta, informe isso de maneira direta e clara.  
-        - Evite criar ou inventar informações para preencher lacunas.  
+        Tratamento de Erros
+            Se nenhuma informação relevante for encontrada:
+            - Não use os embeddings caso não tenha relação com a resposta
+            - NÃO mencione embeddings ou documentos
+            - Responda com "Não possuo essa informação específica no momento. Como posso ajudar de outra forma?"
 
-        ### **Exemplo de Resposta em Markdown**  
-
-        ```markdown
-        **Pergunta do Usuário**: Qual é a pressão do sistema?  
-
-        **Resposta**: A pressão do sistema é **120 kPa**.
-
-        "Exemplos:\n"
-        "Ênfase:\n"
-        "    **Texto em negrito**\n"
-        "    __Texto em itálico__\n"
-        "Listas:\n"
-        "    1. Primeiro item\n"
-        "    2. Segundo item\n"
-        "    3. Terceiro item\n"
-        "Citações:\n"
-        "    > Esta é uma citação.\n"
-        "Código:\n"
-        "    `codigo_em_linha`\n"
-        "    ```Bloco de código```\n"
-        "Tabelas:\n"
-        "    | Cabeçalho 1 | Cabeçalho 2 |\n"
-        "    |-------------|-------------|\n"
-        "    | Linha 1, Col 1 | Linha 1, Col 2 |\n"
-        "    | Linha 2, Col 1 | Linha 2, Col 2 |\n"
-        "Separadores:\n"
-        "    ---\n"
-        "    ***\n"
-        "    ___\n"
-        "Escapando Caracteres:\n"
-        "    \\*Texto com asterisco\\*\n"
-        "Se o usuário não perguntar algo do documento, responda de forma natural com os dados que tem. Não invente respostas, apenas entregue o que tem, caso haja relação. Se não houver, diga que não sabe.\n"
-        "Se a pessoa pedir a localização da BRG Geradores, a localização é: https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9\n"
-        "Se a pessoa pedir a localização da GRID Geradores, a localização é: https://maps.app.goo.gl/Pssputwd5syeTdw16\n"
-        "Se a pessoa pedir a localização da SDO, a localização é: https://maps.app.goo.gl/FRrhnBG9f6HdhChf7\n"
-        "Sempre envie respostas curtas para o usuário. "
-        "Tudo que começa com TWD, TAD, DC, D8, são modelos de motores de geradores da BRG Geradores. "
-        "Evite motores marítimos e foque nos motores industriais.\n"
-        "Não de o nome e nem o caminho do arquivo/Documento"
-        f"Utilize o {periodo_do_dia} para saber o período atual do dia.\n"
-        f"""Se perceber que a pessoa está indo para o caminho de querer falar com alguém, pergunte de qual região está falando. Para as seguintes regiões, envie os números:
-            - Caso usuário envie um nome de uma cidade e não da região, pesquise de qual região ele está atraves do nome da cidade.
-            - Se for Goiânia-Goiás, o representante é [Victor Luciano](https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for Sul ou Centro-Oeste (menos Goiânia), o representante é [Ivan Felix](https://api.whatsapp.com/send?phone=5562998245318&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for Sudeste do Brasil, o representante é [Sérgio Mota](https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for Nordeste, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for o Parceiro Lew Geradores, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for Norte do Brasil, o representante é [José Otávio](https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            - Se for fazendas, o representante é [João Victor Lião](https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-            Caso a pessoa peça apenas o telefone do representante e você já tenha mandado o link do representante, envie o número de acordo:
-                - Sérgio Mota: +55 (62) 9 8117-1423
-                - José Otávio: +55 (62) 9 8117-1407
-                - Otávio Curado: +55 (62) 9 9281-0643
-                - João Victor Lião: +55 (62) 9 9904-3154
-                - Victor Luciano: +55 (62) 9 8213-4286
-                - Ivan Felix: +55 (62) 9 9824-5318
-        """     
-        "Sempre colocar o telefone do representante apos o link do whatsapp."
-        '''      
+        Fluxo de Resposta
+            - Verifique se é uma saudação simples
+            - Se for saudação simples ou com nome, use apenas o formato definido em "Tratamento de Saudações"
+            - Para outras mensagens, analise a consulta e forneça resposta relevante
+            - Mantenha sempre o tom profissional e direto
+            - Apenas usar histórico para contexto
         
+        Formatação da resposta
+            - Sempre dê espaços ou quebra de página após titulos de respostas.
+            - para Links: SEMPRE USAR formatação camuflada [Título do LINK](LINK AQUI)\n" 
+            - Crie um título de acordo com o que o usuário pediu na pergunta
+            - Markdown:
+                - Para listas não ordenadas, utilize um asterisco * na frente to item da lista:
+                    * Item 1
+                    * Item 2
+                    * Item 3
+                - Para listas ordenadas, utilize o número do item seguido de ponto . :
+                    1. Item 1
+                    2. Item 2
+                    3. Item 3
+                - Tabela
+                    Escolha os títulos das colunas e use | para delimitar as colunas. Depois, utilize hífen - na segunda linha para indicar que acima estão os títulos das colunas, usando novamente o | para delimitar colunas. Veja um exemplo abaixo:
+                        | Exemplo   | Valor do exemplo |
+                        | --------- | ---------------- |
+                        | Exemplo 1 | R$ 10            |
+                        | Exemplo 2 | R$ 8             |
+                        | Exemplo 3 | R$ 7             |
+                        | Exemplo 4 | R$ 8             |
+
+                    Para especificar o tipo de alinhamento que deseja ter nas tabelas, utilize : ao lado do campo horizontal de hífens ---, na segunda linha da sua tabela.. Veja abaixo:
+                        Centralizado: usar : dos dois lados.
+                        Veja no exemplo:
+
+                        | Alinhado a esquerda | Centralizado |         Alinhado a direita       |
+                        | :------------------ | :----------: | -------------------------------: |
+                        |        Valor        |     Valor    |               Valor              |
+                        |     Valor menor     |     Valor    |  este e o maior texto da coluna  |
+
+                - Para tabela SEMPRE coloque a quantidade de hifen a partir do maior texto das colunas da tabela, ou seja, pegue a coluna que seja a maior e padronize a quantidade de hifen para todas
+                - Para tabela SEMPRE coloque a quantidade de hifen a partir do maior texto das colunas da tabela, ou seja, pegue a coluna que seja a maior e padronize a quantidade de hifen para todas
+                - Titulo: *Titulo*
+                - Subtitulo: *Subtitulo*
+                - Negrito: *texto*
+                - Itálico: _texto_
+
+       """
     )
+    
+# - Tabelas: Sintaxe markdown padrão
 
-
-
-        # "Seu nome é Spark ⚡, nao precisa enviar toda vez o seu nome, apenas se perguntar"
-        # "Responda de forma curta, clara e informativa à pergunta do usuário com base nos documentos. "
-        # "Apenas use o Historico de perguntas ou Historico de respostas caso entenda que o usuario fez alguma pergunta relacionada a elas. "
-        # "Nunca envie o Historico de perguntas e Historico de respostas aleatoriamente e sem o usuario pedir"
-        # "Caso o usuário envie uma saudação, responda de forma educada com uma saudação de volta e, se necessário, apresente-se. "
-        # "Para mensagem que so tem saudação e nenhuma pergunta, não é necessário citar os documentos, apenas de a saudação de volta. "        
-        # "Apenas use o Historico de perguntas e Historico de respostas caso entenda que o usuario fez alguma pergunta relacionada a elas. "
-        # "Use os historicos para basear sua resposta final. "
-        # "Nunca envie o Historico de perguntas e Historico de respostas aleatoriamente e sem o usuario pedir"
-        # "Caso o usuário pergunte um valor, verifique se há o valor e forneça o valor solicitado junto com a unidade ou grandeza associada. "
-        # "Por exemplo, se o valor for uma pressão, inclua a unidade como 'bar' ou 'kPa'. Certifique-se de identificar corretamente a grandeza com base no contexto. "
-        # "Responda em Markdown, se possível, com tópicos com soluções. "
-        # "Exemplos:\n"
-        # "Ênfase:\n"
-        # "    **Texto em negrito**\n"
-        # "    __Texto em itálico__\n"
-        # "Listas:\n"
-        # "    1. Primeiro item\n"
-        # "    2. Segundo item\n"
-        # "    3. Terceiro item\n"
-        # "Citações:\n"
-        # "    > Esta é uma citação.\n"
-        # "Código:\n"
-        # "    `codigo_em_linha`\n"
-        # "    ```Bloco de código```\n"
-        # "Tabelas:\n"
-        # "    | Cabeçalho 1 | Cabeçalho 2 |\n"
-        # "    |-------------|-------------|\n"
-        # "    | Linha 1, Col 1 | Linha 1, Col 2 |\n"
-        # "    | Linha 2, Col 1 | Linha 2, Col 2 |\n"
-        # "Separadores:\n"
-        # "    ---\n"
-        # "    ***\n"
-        # "    ___\n"
-        # "Escapando Caracteres:\n"
-        # "    \\*Texto com asterisco\\*\n"
-        # "Se o usuário não perguntar algo do documento, responda de forma natural com os dados que tem. Não invente respostas, apenas entregue o que tem, caso haja relação. Se não houver, diga que não sabe.\n"
-        # "Se a pessoa pedir a localização da BRG Geradores, a localização é: https://maps.app.goo.gl/9ZdwWcWzg1Ujuy3f9\n"
-        # "Se a pessoa pedir a localização da GRID Geradores, a localização é: https://maps.app.goo.gl/Pssputwd5syeTdw16\n"
-        # "Se a pessoa pedir a localização da SDO, a localização é: https://maps.app.goo.gl/FRrhnBG9f6HdhChf7\n"
-        # "Sempre envie respostas curtas para o usuário. "
-        # "Tudo que começa com TWD, TAD, DC, D8, são modelos de motores de geradores da BRG Geradores. "
-        # "Evite motores marítimos e foque nos motores industriais.\n"
-        # "Não de o nome e nem o caminho do arquivo/Documento"
-        # f"Utilize o {periodo_do_dia} para saber o período atual do dia.\n"
-        # f"""Se perceber que a pessoa está indo para o caminho de querer falar com alguém, pergunte de qual região está falando. Para as seguintes regiões, envie os números:
-        #     - Caso usuário envie um nome de uma cidade e não da região, pesquise de qual região ele está atraves do nome da cidade.
-        #     - Se for Goiânia-Goiás, o representante é [Victor Luciano](https://api.whatsapp.com/send?phone=5562982134286&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for Sul ou Centro-Oeste (menos Goiânia), o representante é [Ivan Felix](https://api.whatsapp.com/send?phone=5562998245318&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for Sudeste do Brasil, o representante é [Sérgio Mota](https://api.whatsapp.com/send?phone=5562981171423&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for Nordeste, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for o Parceiro Lew Geradores, o representante é [Otávio Curado](https://api.whatsapp.com/send?phone=5562992810643&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for Norte do Brasil, o representante é [José Otávio](https://api.whatsapp.com/send?phone=5562981171407&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     - Se for fazendas, o representante é [João Victor Lião](https://api.whatsapp.com/send?phone=5562999043154&text={periodo_do_dia}%2C%20tudo%20bem%3F%20Gostaria%20de%20solicitar%20um%20atendimento%21).
-        #     Caso a pessoa peça apenas o telefone do representante e você já tenha mandado o link do representante, envie o número de acordo:
-        #         - Sérgio Mota: +55 (62) 9 8117-1423
-        #         - José Otávio: +55 (62) 9 8117-1407
-        #         - Otávio Curado: +55 (62) 9 9281-0643
-        #         - João Victor Lião: +55 (62) 9 9904-3154
-        #         - Victor Luciano: +55 (62) 9 8213-4286
-        #         - Ivan Felix: +55 (62) 9 9824-5318
-        # """     
-        # "Sempre colocar o telefone do representante apos o link do whatsapp."
-
-
-    Pergunta_user = f"Pergunta do Usuário: {user_query}\n\n"
-
-    for i, doc in enumerate(results['documents'][0]):
-        metadata = results['metadatas'][0][i]
-        Pergunta_user += f"Documento {i+1} (arquivo: {metadata['file_name']}):\n{doc}\n\n"
-
+    
     if id_user and id_user in historico_perguntas:
-        Pergunta_user += f"\nÚltimas perguntas do usuário: {historico_perguntas[id_user]}"
+        perguntas_formatadas = "\n".join(
+            [f"{idx + 1}. {pergunta}" for idx, pergunta in enumerate(historico_perguntas[id_user][::-1])]
+        )
+        #print(perguntas_formatadas)
+        prompt += f"\nÚltimas Perguntas do usuário:\n{perguntas_formatadas}"
 
     if id_user and id_user in historico_respostas:
-        Pergunta_user += f"\nÚltimas Respostas da LLM usando pdf ou prompt: {historico_respostas[id_user]}"
+        respostas_formatadas = "\n".join(
+            [f"{idx + 1}. {resposta}" for idx, resposta in enumerate(historico_respostas[id_user][::-1])]
+        )
+        #print(respostas_formatadas)
+        prompt += f"\nÚltimas Respostas da LLM para o usuário:\n{respostas_formatadas}"
 
-    Pergunta_user = clean_html(Pergunta_user)
-
+    Pergunta_user = f"Pergunta do Usuário: {user_query}\n"
+    
+    for i, doc in enumerate(results['documents'][0]):
+        metadata = results['metadatas'][0][i]
+        # aqui para saber qual nome do arquivo PDF
+        # saida do print {'file_name': 'C:\\Users\\user\\Desktop\\codigos\\LLM\\Apostilas Formatadas\\Alarmes e Possíveis Causas.pdf'}
+        Pergunta_user += f"\nEMBEDDING {i+1}: \n{doc}\n"
+            
     chat_completion = client_groq.chat.completions.create(
         messages=[
-        {
-            "role": "system",
-            "content": prompt
-        },
-        {
-            "role": "user",
-            "content": Pergunta_user,
-        }
+            {
+                "role": "system",
+                "content": prompt
+            },
+            {
+                "role": "user",
+                "content": Pergunta_user,
+            }
         ],  
-        model="llama3-70b-8192",  
+        model="llama3-70b-8192", # llama3-70b-8192   llama-3.3-70b-versatile  llama-3.1-8b-instant
+        max_tokens=1024,
+        temperature=0.7,
+
     )
-        
-    resposta = chat_completion.choices[0].message.content
+       
+    resposta = chat_completion.choices[0].message.content 
+    
+    tokens_saida = chat_completion.usage.completion_tokens
+#    print(f"Tokens de saída: {tokens_saida}")
     
     if id_user:
         if id_user not in historico_perguntas:
             historico_perguntas[id_user] = []
-        if len(historico_perguntas[id_user]) >= 5:
+        if len(historico_perguntas[id_user]) >= 2:
             historico_perguntas[id_user].pop(0)
         historico_perguntas[id_user].append(user_query)
 
         if id_user not in historico_respostas:
             historico_respostas[id_user] = []
-        if len(historico_respostas[id_user]) >= 5:
+        if len(historico_respostas[id_user]) >= 2:
             historico_respostas[id_user].pop(0)
         historico_respostas[id_user].append(resposta)
-
+       
     return resposta
+
+
+
 
 
 
@@ -4263,7 +4245,7 @@ def get_or_create_collection():
     
     
 # Função para enviar resposta para o WhatsApp
-def send_response_to_whatsapp(phone, message):
+def send_response_to_whatsapp(phone, message, reply_to=None, user_query=None):
     evolution_api_url = "http://192.168.15.60:8080"  # Servidor de envio
     evolution_api_instance = "Suporte_BRG"
     evolution_api_key = "k3v14ilstiguaumoz8nzt"
@@ -4273,37 +4255,62 @@ def send_response_to_whatsapp(phone, message):
         'Content-Type': 'application/json',
         'apikey': evolution_api_key
     }
+
     payload = {
         "number": phone,
         "textMessage": {
             "text": message
+        },
+        "options": {
+            "delay": 800,  
+            "presence": "composing"  
         }
     }
 
+    if reply_to is not None and user_query is not None:
+        
+        payload["options"]["quoted"] = {
+            "key": {
+                "remoteJid": f"{phone}@s.whatsapp.net",
+                "fromMe": True,  
+                "id": reply_to,
+                "participant": ""  # Deixe vazio se não for uma conversa em grupo
+            },
+            "message": {
+                "conversation": user_query
+            }
+        }
+
     try:
         response = requests.post(route, json=payload, headers=headers)
-        return response.json()  # Retorna a resposta da API
+        return response.json()  
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
 
+
+
+
+
+ultima_msg_wpp = {}
 
 @app.post("/webhook")
 async def receive_webhook(request: Request):
     try:
         data = await request.json()
 
-        # Validar o evento do webhook
         if data.get("event") != "messages.upsert":
             return {"status": "error", "message": "Evento desconhecido"}
 
         user_query = data.get("data", {}).get("message", {}).get("conversation")
+
         sender = data.get("data", {}).get("key", {}).get("remoteJid")
-        id_user = sender.split('@')[0]
-        user_name = data.get("data", {}).get("pushName", {})
-        
+        user_name = data.get("data", {}).get("pushName", {})   
+
         message_type = None
         message_data = data.get("data", {}).get("message", {})
-    
+        
+        id_user = sender.split('@')[0] 
+
         if "conversation" in message_data:
             message_type = "text"
         elif "imageMessage" in message_data:
@@ -4312,8 +4319,24 @@ async def receive_webhook(request: Request):
             message_type = "audio"
         elif "extendedTextMessage" in message_data:
             message_type = "text"
+        
   
-        if message_type == "text":
+        if message_type == "text":  
+
+            if ultima_msg_wpp.get(id_user, 2) == 1: 
+                #print(f"A última mensagem do usuário {id_user} foi uma foto.")
+                ultima_msg_wpp[id_user] = 0  # Agora a mensagem é texto
+
+                image_path = os.path.join("/home/bruno/imagens", "imagem_temporaria_wpp.jpg")
+                image_caption = message_data.get("conversation") or message_data.get("extendedTextMessage", {}).get("text")
+
+                pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
+
+                send_response_to_whatsapp(sender, resposta_bot_image)
+
+                os.remove(image_path)
+                #print("Imagem apagada da pasta.")
+                return
 
             if "extendedTextMessage" in message_data: 
                 context_info = data.get("data", {}).get("message", {}).get("extendedTextMessage", {}).get("contextInfo", {})
@@ -4350,12 +4373,15 @@ async def receive_webhook(request: Request):
             
             pool = dp.pool
 
-            response = await query_and_prompt_whatsapp(user_query=user_query, top_k=3, is_callback=is_callback, id_user=id_user)  
+            response = await query_and_prompt_whatsapp(user_query=user_query, is_callback=is_callback, id_user=id_user)  
             
             if response is None:
                 return {"status": "error", "message": "Erro ao processar a consulta"}
+
+            text_id = data.get("data", {}).get("key", {}).get("id")
             
-            send_response_to_whatsapp(sender, response)
+            send_response_to_whatsapp(sender, response, reply_to=text_id, user_query=user_query) 
+
             
             try:
                 async with pool.acquire() as conn:
@@ -4470,15 +4496,19 @@ async def receive_webhook(request: Request):
 
                         if image_caption == "Nenhuma legenda fornecida.":
                             send_response_to_whatsapp(sender, "Por favor, envie uma legenda ou descrição junto com a imagem para que possamos analisá-la.")
+                            ultima_msg[id_user] = 1 
+                            #print("Esperando pergunta")
                         else:
                             pergunta_LLM, resposta_bot_image = await descrever_imagem(image_path, image_caption)
                             send_response_to_whatsapp(sender, resposta_bot_image)
+                            if os.path.exists(image_path):
+                                #print("Imagem removida.")
+                                os.remove(image_path)
 
+            except Exception as e:
+                print(f"{e}")
+                # tirar o finally do image 
 
-            finally:
-                if os.path.exists(image_path):
-                    print("Imagem removida.")
-                    os.remove(image_path)
 
         elif message_type == "audio":
             try:   
@@ -4578,7 +4608,8 @@ async def receive_webhook(request: Request):
 
                             is_callback = True
                             
-                            response = await query_and_prompt_whatsapp(user_query=transcription, top_k=3, is_callback=is_callback, id_user=id_user)
+                            response = await query_and_prompt_whatsapp(user_query=transcription, is_callback=is_callback, id_user=id_user)
+                            ultima_msg_wpp[id_user] = 0
 
                             send_response_to_whatsapp(sender, response)
                             pool = dp.pool
@@ -4663,7 +4694,7 @@ async def receive_webhook(request: Request):
 
                             is_callback = True
                             
-                            response = await query_and_prompt_whatsapp(user_query=transcription, top_k=3, is_callback=is_callback, id_user=id_user)
+                            response = await query_and_prompt_whatsapp(user_query=transcription, is_callback=is_callback, id_user=id_user)
 
                             send_response_to_whatsapp(sender, response)
                             pool = dp.pool
@@ -4961,9 +4992,16 @@ async def teste_menu(message: types.Message):
                                 else:
                                     await bot.send_message(chat_id, mensagem, parse_mode='HTML')
 
-                                mensagem_total_equipamentos += f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n"
+#                                mensagem_total_equipamentos += f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n"
+                                mensagem_total_equipamentos += f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n\n"
+                                mensagem_total_equipamentos += "📊 Relatórios:\n"
+                                mensagem_total_equipamentos += "• [Power BI](https://bit.ly/ia_brg)\n"
+                                mensagem_total_equipamentos += "• [Dashboard](bit.ly/ia_brg_py)\n"
+                                
                                 print(f"\n\nGeradores Em Operação: {total_equipamentos}\nGeradores Em alerta: {total_equipamentos_true}\n")
-                                await bot.send_message(chat_id, mensagem_total_equipamentos)
+                            #    await bot.send_message(chat_id, mensagem_total_equipamentos)
+                                await bot.send_message(chat_id, mensagem_total_equipamentos, parse_mode='Markdown')
+
                                 print('************************************************ fim dos geradores *****************************************************************')
                                 sys.stdout.flush()
     except Exception as e:
@@ -5282,19 +5320,7 @@ async def monitorar_leituras_consecutivas(pool):
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
     #    print('\n','------------------------------------------------------------- inicio monitorar_leituras_consecutivas --------------------------------------------------------------------------', data_cadastro_formatada,'\n')
-
-        # print('equipamentos_com_alerta',equipamentos_com_alerta)
-        # print('equipamentos_alerta_0',equipamentos_alerta_0)
-
         try:
-
-            # async with pool.acquire() as conn:
-            #     async with conn.cursor() as cursor:
-            #         await cursor.execute("""
-            #         SELECT cod_equipamento, cod_campo, alerta, valor_1, valor_2, valor_3, valor_4, valor_5 FROM machine_learning.leituras_consecutivas
-            #         """)
-            #         leituras = await cursor.fetchall()
-
             async with pool.acquire() as conn:
                 await conn.ping(reconnect=True)  # Forçar reconexão
                 async with conn.cursor() as cursor:
@@ -5359,42 +5385,7 @@ async def monitorar_leituras_consecutivas(pool):
                                             """, (cod_equipamento, cod_usina))
                                             await conn.commit()
                                             print(f'Nova entrada 1 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
-
-                                        # elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
-                                        #     print('elif da atualizacao 2', 'ultima_data_prevista', ultima_data_prevista,'ultima_data_cadastro_quebra',ultima_data_cadastro_quebra,'agora',agora,'agora - ultima_data_prevista',agora - ultima_data_prevista )
-                                        #     await cursor.execute("""
-                                        #         UPDATE machine_learning.relatorio_quebras 
-                                        #         SET data_cadastro_previsto = %s 
-                                        #         WHERE id = (
-                                        #             SELECT id 
-                                        #             FROM (
-                                        #                 SELECT id 
-                                        #                 FROM machine_learning.relatorio_quebras 
-                                        #                 WHERE cod_equipamento = %s 
-                                        #                 ORDER BY data_cadastro_previsto DESC 
-                                        #                 LIMIT 1
-                                        #             ) AS subquery
-                                        #         )
-                                        #     """, (datetime.now(), cod_equipamento))
-                                        #     await conn.commit()
-                                        # #    print(f'Atualização no relatório de quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
-                                            
-                                        #     await cursor.execute("""
-                                        #         UPDATE machine_learning.log_relatorio_quebras 
-                                        #         SET data_cadastro_previsto = %s 
-                                        #         WHERE id = (
-                                        #             SELECT id 
-                                        #             FROM (
-                                        #                 SELECT id 
-                                        #                 FROM machine_learning.relatorio_quebras 
-                                        #                 WHERE cod_equipamento = %s 
-                                        #                 ORDER BY data_cadastro_previsto DESC 
-                                        #                 LIMIT 1
-                                        #             ) AS subquery
-                                        #         )
-                                        #     """, (datetime.now(), cod_equipamento))
-                                        #     print(f'Atualização 2 no relatório de log e quebras para o equipamento {cod_equipamento}',data_cadastro_formatada,'\n')
-                                                                                    
+          
                                         elif ultima_data_prevista and not ultima_data_cadastro_quebra and (agora - ultima_data_prevista) < timedelta(hours=6):
                                             await cursor.execute("""
                                                 UPDATE machine_learning.relatorio_quebras SET data_cadastro_previsto = %s WHERE cod_equipamento = %s ORDER BY data_cadastro_previsto DESC LIMIT 1
@@ -8371,7 +8362,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
                                                             if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
                                                                 # Monta a mensagem
                                                                 mensagem_final_wtss = (
-                                                                    f"🟡 **ALERTA!**\n\n"
+                                                                    f"🟡 *ALERTA!*\n\n"
                                                                     f"Usina: {cod_usina} - {nome_usina}\n\n"
                                                                     + ''.join([msg for msg in mensagens if 'Alerta' in msg])
                                                                 )
@@ -8483,7 +8474,7 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
         print('\n','--------------------------------------------------- fim enviar_previsao_valor_equipamento_alerta ----------------------------------------------------------------', data_cadastro_formatada_final, '\n')
         print(f'Tempo de execução do enviar_previsao_valor_equipamento_alerta: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
-        await asyncio.sleep(180)
+        await asyncio.sleep(300)
 
 
 
@@ -9492,7 +9483,7 @@ async def enviar_alerta_80_100(cod_equipamentos, tabelas, cod_campo_especificado
         print('\n','------------------------------------------------------------- fim enviar_alerta_80_100 --------------------------------------------------------------------------', data_cadastro_formatada_final)
         print(f'Tempo de execução do enviar_alerta_80_100: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
-        await asyncio.sleep(120)
+        await asyncio.sleep(200)
       
 
 import requests

@@ -18,6 +18,10 @@ st.set_page_config(
 # Aplicar CSS personalizado
 st.markdown("""
     <style>
+    body, .stApp {
+        background-color: #0E1117 !important;
+        color: #FAFAFA !important;
+    }
     /* Ajustar a distância da borda superior */
     .main-container {
         display: flex;
