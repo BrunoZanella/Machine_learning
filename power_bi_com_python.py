@@ -493,22 +493,37 @@ async def main():
             now = datetime.now(tz_sao_paulo)
             st.write(f"Atualizado em: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
+            # Criar o gráfico do indicador
+            tickvals = list(range(0, max_value + 1, 5))  # Gera os múltiplos de 5 até o valor máximo
+            if max_value not in tickvals:  # Verifica se o valor máximo já está na lista
+                tickvals.append(max_value)  # Adiciona o valor máximo, se necessário
+
+            ticktext = [str(i) for i in tickvals]  # Converte os valores para texto
+
+            # Criar o gráfico do indicador
             fig = go.Figure(go.Indicator(
                 mode="gauge+number+delta",
                 value=alerta_count,
-                title={'text': "Equipamentos com Alerta"},
                 gauge={
-                    'axis': {'range': [0, max_value]},  # Intervalo do gauge com o valor máximo
+                    'axis': {
+                        'range': [0, max_value], 
+                        'tickmode': 'array',  # Define os ticks personalizados
+                        'tickvals': tickvals,  # Marcações personalizadas (0, 5, 10, 15, ..., 28)
+                        'ticktext': ticktext,  # Texto das marcações
+                        'tickcolor': "#FAFAFA"  # Cor dos números dos ticks
+                    },
                     'bar': {'color': "#FF4B4B"},  # Cor da barra do gauge
-                    'bgcolor': "#262730",  # Cor de fundo
+                    'bgcolor': "white",  # Cor de fundo do gauge
                     'steps': [
-                        {'range': [0, max_value], 'color': "#262730"}  # Cor de fundo do gauge
+                        {'range': [0, max_value], 'color': "white"}  # Cor de fundo do gauge branco
                     ]
                 },
-                number={'font': {'size': 20, 'color': "#FAFAFA"}},  # Cor do texto do número
-                delta={'reference': max_value, 'relative': True, 'position': "top"}  # Adiciona uma referência ao valor máximo
-
+                number={'font': {'size': 20, 'color': "#FAFAFA"}},  # Número branco
             ))
+
+            # Define o fundo geral da figura como preto
+            fig.update_layout(paper_bgcolor="#0E1117", font={'color': "#FAFAFA"})
+
             # Adicionar uma anotação para o valor máximo
             fig.add_annotation(
                 x=0.5,
@@ -603,9 +618,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-
-'''
-MeuRH01|C012LC_PROD|https://transbraz179646.protheus.cloudtotvs.com.br:4020/meurh01/?restPort=4050||https://transbraz179646.protheus.cloudtotvs.com.br:4050/restmeurh01|
-
-'''
