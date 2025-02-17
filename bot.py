@@ -75,6 +75,9 @@ import difflib
 from aiogram.utils.exceptions import MessageNotModified, MessageToDeleteNotFound
 from asyncio import sleep
 #from PIL import Image
+import asyncio
+import subprocess
+import json
 
 TOKEN = "6959786383:AAF6Ob3oZcUf3C0zmAOjjIr8337cV5ZkJX4"
 
@@ -3377,6 +3380,24 @@ def split_text_into_chunks(texto_extraido, max_chunk_size=None):
 
     return chunks
 
+def generate_enhanced_chunks(data):
+
+    enhanced_chunks = []
+    
+    for i, alarme in enumerate(data):
+        
+        current_chunk = (
+            f"Alarme: {alarme['Alarme']} ({alarme['Extenso']}) \n"
+            f"Descrição: {alarme['Descrição']}\n"
+            f"Significado: {alarme['Significado']}\n"
+            f"Causas: {alarme['Causas']}\n"
+            f"Soluções: {alarme['Soluções']}\n"
+        )
+            
+        enhanced_chunks.append(current_chunk)
+    
+    return enhanced_chunks
+
 
 def generate_embeddings(chunks, model_name="sentence-transformers/all-mpnet-base-v2"):
 
@@ -3385,6 +3406,41 @@ def generate_embeddings(chunks, model_name="sentence-transformers/all-mpnet-base
     embeddings = model.encode(chunks, convert_to_numpy=True)  
 
     return embeddings
+
+
+
+def read_json_file(json_file_path):
+    with open(json_file_path, 'r', encoding='utf-8') as json_file:
+        return json.load(json_file)
+
+def process_json(pdf_file):
+    try:
+        data = read_json_file(pdf_file)
+        
+        enhanced_chunks = generate_enhanced_chunks(data)
+
+        embeddings = generate_embeddings(enhanced_chunks)
+        
+        for i, alarme in enumerate(data):
+            chunk_id = f"alarme_{alarme['Alarme']}_{uuid4().hex}"
+            #print(chunk_id)
+            chunk_text = enhanced_chunks[i]
+                       
+            try:
+                collection.add(
+                    embeddings=[embeddings[i]], # os vetores
+                    documents=[chunk_text], # os textos
+                    metadatas=[{"file_name": pdf_file, "alarme": alarme['Alarme']}],
+                    ids=[chunk_id]
+                )
+                
+            except Exception as e:
+                print(f"Erro ao adicionar o alarme {alarme['Alarme']}: {e}")
+
+    except Exception as e:
+        print(f"Erro ao processar o arquivo JSON: {e}")
+
+
 
 collection_name = "LLM_brg"
 
@@ -3417,7 +3473,8 @@ except Exception as e:
 
 
 pdf_files = [
-    r"/home/bruno/documentos/Geral.md",
+    r"/home/bruno/documentos_docling/apostilas.md",
+    r"/home/bruno/documentos_docling/alarmes.json",
 
 #    r"/home/bruno/documentos/Alarmes_possiveis_causas.pdf",
 #    r"/home/bruno/documentos_docling/operacao_diagnostico_falhas.md",
@@ -3470,7 +3527,18 @@ for pdf_file in pdf_files:
                     with open(pdf_file, 'r', encoding='utf-8') as md_file:
                         text = md_file.read()
                     chunks = chunks_markdown(text) 
-                     
+
+            elif pdf_file.endswith('.json'):
+                print(f"Processando: {pdf_file}")
+                existing_metadata = collection.get(where={"file_name": pdf_file})
+                
+                if existing_metadata["ids"]:
+                    print(f"Arquivo {pdf_file} já está na coleção.\nRecuperando embeddings existentes.")
+                    continue
+                else:
+                    process_json(pdf_file)  
+                    continue 
+
             # Gerar embeddings para os chunks
             embeddings = generate_embeddings(chunks)
 
@@ -3519,6 +3587,29 @@ def clean_html(content):
     content = re.sub(r'\n+', ' ', content)  
     content = re.sub(r'\s+', ' ', content).strip()
     return content
+
+
+async def converter_numero(frase, idioma='pt_BR'):
+    def substituir_numero(match):
+        numero = match.group()
+        try:
+            if '.' in numero or ',' in numero:
+                numero = numero.replace('.', '').replace(',', '.')  
+                numero_extenso = num2words(float(numero), lang=idioma)
+            else:
+                numero_extenso = num2words(int(numero), lang=idioma)
+            
+            numero_extenso = numero_extenso.replace(' vírgula ', ', ')  
+            return f"{match.group()} ({numero_extenso})"
+        except ValueError:
+            return numero  
+
+    padrao = r'\b\d+(?:[.,]\d+)?\b'
+    frase_convertida = re.sub(padrao, substituir_numero, frase)
+
+    return frase_convertida
+
+
 
 async def Buscar_pergunta_LLM_bot(user_query, similarity_threshold=0.82):
     pool = dp.pool
@@ -3574,24 +3665,50 @@ async def Buscar_pergunta_LLM_bot(user_query, similarity_threshold=0.82):
         return None
 
 
-historico_perguntas = deque(maxlen=5)
-historico_respostas = deque(maxlen=5)
 
+historico_perguntas = {}
+historico_respostas = {}
 
-async def query_and_prompt(user_query, is_callback=False):
+async def query_and_prompt_whatsapp(user_query, is_callback=False, id_user=None):
 
     if not is_callback:
         Resposta_db = await Buscar_pergunta_LLM_bot(user_query)
         if Resposta_db:
             return Resposta_db
 
-    historico_perguntas.append(user_query)
-
-    embedding = generate_embeddings([user_query])
-    results = collection.query(
-        query_embeddings=embedding,
-        n_results=top_k
-    )
+    user_query_ext = await converter_numero(user_query)
+    top_k = 5
+    
+    alarm_numbers = re.findall(r'\d+', user_query_ext)
+    alarm_number = alarm_numbers[0] if alarm_numbers else None
+    
+    try:
+        if alarm_number:
+                       
+            full_documents = collection.get(
+                where={"alarme": alarm_number},
+                include=["documents"],
+                limit=3
+            )
+            results = full_documents.get('documents', [])
+                               
+            if not results:                           
+                embedding = generate_embeddings([user_query_ext])
+                results = collection.query(
+                    query_embeddings=embedding,
+                    n_results=top_k
+                )
+                
+        else:   
+            embedding = generate_embeddings([user_query_ext])
+            results = collection.query(
+                query_embeddings=embedding,
+                n_results=top_k
+            )
+            #aqui é um dicionario
+    except Exception as e:
+        print(f"Erro na busca: {e}")
+        results = None
 
     # prompt_content = (
     # "Responda em português! Responda de forma curta, clara e informativa à pergunta do usuário com base nos documentos. "
@@ -3656,35 +3773,66 @@ async def query_and_prompt(user_query, is_callback=False):
         "Formate a mensagem antes de enviar, de espaços e pule linhas para ficar mais compreensível"        
     )
 
+    if id_user and id_user in historico_perguntas:
+            perguntas_formatadas = "\n".join(
+                [f"{idx + 1}. {pergunta}" for idx, pergunta in enumerate(historico_perguntas[id_user][::-1])]
+            )
+            prompt += f"\nÚltimas Perguntas do usuário:\n{perguntas_formatadas}"
+    
+    if id_user and id_user in historico_respostas:
+        respostas_formatadas = "\n".join(
+            [f"{idx + 1}. {resposta}" for idx, resposta in enumerate(historico_respostas[id_user][::-1])]
+        )
+        prompt += f"\nÚltimas Respostas da LLM para o usuário:\n{respostas_formatadas}"
+        
+    Pergunta_user = f"Pergunta do Usuário: {user_query}\n" 
+        
+    if results:        
+        if isinstance(results, list):
+            print(type(results))
+            for i, doc in enumerate(results):
+                Pergunta_user += f"\nEMBEDDING {i+1}: \n{doc}\n"  # Aqui trata a lista
 
-    if historico_perguntas:
-        prompt_content += "Histórico de perguntas recentes do usuário:\n"
-        for idx, pergunta in enumerate(historico_perguntas, 1):
-            prompt_content += f"{idx}. {pergunta}\n"
-        prompt_content += "\n"
-
-    for i, doc in enumerate(results['documents'][0]):
-        metadata = results['metadatas'][0][i]
-        prompt_content += f"Documento {i+1} (arquivo: {metadata['file_name']}):\n{doc}\n\n"
-
-    prompt_content += f"Pergunta: {user_query}"
-#    prompt_content = clean_html(prompt_content)
-
-    # Enviar o prompt para o Groq API
+        elif isinstance(results, dict):
+            print(type(results))
+            for i, doc in enumerate(results['documents'][0]):
+                Pergunta_user += f"\nEMBEDDING {i+1}: \n{doc}\n"  # Aqui trata o dicionário
+            
     chat_completion = client_groq.chat.completions.create(
         messages=[
             {
+                "role": "system",
+                "content": prompt
+            },
+            {
                 "role": "user",
-                "content": prompt_content,
+                "content": Pergunta_user,
             }
-        ],
-        model="llama3-70b-8192",  
+        ],  
+        model="llama-3.3-70b-versatile", # llama3-70b-8192   llama-3.3-70b-versatile  llama-3.1-8b-instant   deepseek-r1-distill-llama-70b
+        
     )
-    
-    resposta = chat_completion.choices[0].message.content
-    historico_respostas.append(resposta)
-    return resposta
 
+    resposta = chat_completion.choices[0].message.content
+    resposta_clean = clean_html(resposta)
+
+    # tokens_saida = chat_completion.usage.completion_tokens
+    # print(f"Tokens de saída: {tokens_saida}")
+    
+    if id_user:
+        if id_user not in historico_perguntas:
+            historico_perguntas[id_user] = []
+        if len(historico_perguntas[id_user]) >= 2:
+            historico_perguntas[id_user].pop(0)
+        historico_perguntas[id_user].append(user_query)
+
+        if id_user not in historico_respostas:
+            historico_respostas[id_user] = []
+        if len(historico_respostas[id_user]) >= 2:
+            historico_respostas[id_user].pop(0)
+        historico_respostas[id_user].append(resposta)
+
+    return resposta_clean
 
 
 
@@ -8479,6 +8627,143 @@ async def enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, co
 
 
 
+
+
+
+
+
+def dividir_mensagem(mensagem, limite=4096):
+    """Divide a mensagem em partes menores caso ultrapasse o limite do Telegram."""
+    mensagens = []
+    while len(mensagem) > limite:
+        corte = mensagem[:limite].rfind('\n')  # Tenta dividir em uma linha completa
+        if corte == -1:
+            corte = limite  # Caso não encontre um corte apropriado
+        mensagens.append(mensagem[:corte])
+        mensagem = mensagem[corte:]
+    mensagens.append(mensagem)
+    return mensagens
+
+equipamentos_ativos_gerador = set()
+
+async def enviar_alerta_gerador_ligado(cod_equipamentos, pool):
+    while True:
+        tempo_inicial = datetime.now()
+        print(f"\n{'-'*30} Início do monitoramento {tempo_inicial.strftime('%d-%m-%Y %H:%M')} {'-'*30}\n")
+
+        async with pool.acquire() as conn:
+            await conn.ping(reconnect=True)
+            async with conn.cursor() as cursor:
+                alertas_por_usina = {}
+                for cod_equipamento in cod_equipamentos:
+                    try:
+                        await cursor.execute(
+                            """
+                            SELECT e.cod_usina, e.nome, u.cod_modelo_funcionamento, u.nome
+                            FROM sup_geral.equipamentos e
+                            JOIN sup_geral.usinas u ON e.cod_usina = u.codigo
+                            WHERE e.codigo = %s
+                            """, (cod_equipamento,)
+                        )
+                        result = await cursor.fetchone()
+                        if not result:
+                            continue
+
+                        cod_usina, nome_equipamento, cod_modelo_funcionamento, nome_usina = result
+
+                        await cursor.execute(
+                            "SELECT descricao FROM sup_geral.modelo_funcionamento WHERE codigo = %s",
+                            (cod_modelo_funcionamento,)
+                        )
+                        modelo_result = await cursor.fetchone()
+                        if not modelo_result or modelo_result[0].strip().upper() != "FALTA DE ENERGIA":
+                            continue
+
+                        await cursor.execute(
+                            """
+                            SELECT valor_1, valor_2, valor_3, valor_4, valor_5, data_cadastro 
+                            FROM machine_learning.leituras_consecutivas 
+                            WHERE cod_equipamento = %s AND cod_campo = 6
+                            """, (cod_equipamento,)
+                        )
+                        result = await cursor.fetchone()
+                        if not result:
+                            continue
+
+                        valores = list(result[:-1])
+                        tensao_atual = valores[0]
+                        data_cadastro_consecutivas = result[-1]
+
+                        agora = datetime.now()
+                        if agora - data_cadastro_consecutivas > timedelta(minutes=10):
+                            continue
+
+                        if (tensao_atual > 0 and cod_equipamento not in equipamentos_ativos_gerador) or \
+                           (tensao_atual == 0 and all(v == 0 for v in valores) and cod_equipamento in equipamentos_ativos_gerador):
+
+                            await cursor.execute(
+                                "SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usina = %s",
+                                (cod_usina,)
+                            )
+                            usuarios_result = await cursor.fetchall()
+                            if not usuarios_result:
+                                continue
+
+                            cod_usuarios = [row[0] for row in usuarios_result]
+                            await cursor.execute(
+                                """
+                                SELECT usuario, id_telegram, telefone, somente_telefone FROM machine_learning.usuarios_telegram 
+                                WHERE cod_usuario IN %s AND ativo = 1 AND equipamento_rodando = 1
+                                """,
+                                (tuple(cod_usuarios),)
+                            )
+                            usuarios_telegram = await cursor.fetchall()
+                            if not usuarios_telegram:
+                                continue
+
+                            if cod_usina not in alertas_por_usina:
+                                alertas_por_usina[cod_usina] = {"nome": nome_usina, "mensagens": []}
+
+                            if tensao_atual > 0:
+                                equipamentos_ativos_gerador.add(cod_equipamento)
+                                alertas_por_usina[cod_usina]["mensagens"].append(
+                                    f"⚡ Equipamento {nome_equipamento} está LIGADO!"
+                                )
+                            else:
+                                equipamentos_ativos_gerador.remove(cod_equipamento)
+                                alertas_por_usina[cod_usina]["mensagens"].append(
+                                    f"🔴 Equipamento {nome_equipamento} foi DESLIGADO!"
+                                )
+                    except Exception as e:
+                        print(f"Erro no equipamento {cod_equipamento}: {e}")
+
+                for cod_usina, dados in alertas_por_usina.items():
+                    mensagem_completa = f"Usina {dados['nome']}!\n\n" + "\n".join(dados["mensagens"])
+                    mensagens_divididas = dividir_mensagem(mensagem_completa)
+
+                    for usuario, id_telegram, telefone, somente_telefone in usuarios_telegram:
+                        if somente_telefone == 1:
+                            telefone_formatado = str(telefone).strip().replace(" ", "").replace("-", "")
+                            if not telefone_formatado.startswith("+"):
+                                telefone_formatado = f"+{telefone_formatado}"
+                            if len(telefone_formatado) > 8 and telefone_formatado[1:].isdigit():
+                                payload = {
+                                    "number": telefone_formatado,
+                                    "textMessage": {"text": mensagem_completa}
+                                }
+                                start_chat(payload)
+                                print(f"Mensagem enviada via WhatsApp para {usuario}.")
+                        else:
+                            for mensagem in mensagens_divididas:
+                                await bot.send_message(id_telegram, mensagem)
+                                print(f"Mensagem enviada via telegram para {usuario}.")
+
+        print("Aguardando 60 segundos antes da próxima verificação...")
+        await asyncio.sleep(60)
+
+
+
+
 ultimos_valores = {}
 alertas_enviados = set()
 hora_media_alerta_1_80 = {}  # Dicionário para mapear o código do equipamento para a hora do alerta igual a 1
@@ -10661,7 +10946,7 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                 equipamento_info = next((equipamento for equipamento in equipamentos_ativos if equipamento[0] == cod_equipamento), None)
 
                 if equipamento_info:
-                    print('\n----------------------------------------------------------------------------------------------------------------\n')
+                #    print('\n----------------------------------------------------------------------------------------------------------------\n')
                     cod_usina, nome_usina, nome_equipamento, motor, marca, potencia, tensao = equipamento_info[1], equipamento_info[2], equipamento_info[3], equipamento_info[4], equipamento_info[5], equipamento_info[6], equipamento_info[7]
 
                     # Realizar contagem de equipamentos ativos para a usina
@@ -10673,7 +10958,7 @@ async def novo_fazer_previsao_sempre_alerta_novo(cod_equipamento, pool):
                     if contagem_equipamentos_ativos:
                         contagem_equipamentos_ativos = contagem_equipamentos_ativos[0]
 
-                    print(f"Equipamento {cod_equipamento} ({nome_equipamento}) pertence à usina {nome_usina} (código: {cod_usina}) que tem {contagem_equipamentos_ativos} equipamentos ativos. O motor {motor} da marca {marca}, de potencia {potencia} e tensao {tensao}")
+                #    print(f"Equipamento {cod_equipamento} ({nome_equipamento}) pertence à usina {nome_usina} (código: {cod_usina}) que tem {contagem_equipamentos_ativos} equipamentos ativos. O motor {motor} da marca {marca}, de potencia {potencia} e tensao {tensao}")
 
                 else:
     #                print(f"Equipamento {cod_equipamento} não encontrado na lista de equipamentos ativos.")
@@ -10949,7 +11234,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
         tempo_inicial = datetime.now()
         data_cadastro_formatada = tempo_inicial.strftime('%d-%m-%Y %H:%M')
-        print('\n',f'loop número {contador_loop} ------------------------------- inicio novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada, '\n')
+    #    print('\n',f'loop número {contador_loop} ------------------------------- inicio novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada, '\n')
 
         try:
 
@@ -11038,7 +11323,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                 """, (int(cod_equipamento),))
                                 await conn.commit()
 
-                                print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
+                            #    print(f"Equipamento {cod_equipamento} removido da lista de alertas pois todos os valores são 0.")
 
                                 # cod_usina = next(
                                 #     (equip['cod_usina'] for equip in equipamentos_alertados if equip['cod_equipamento'] == cod_equipamento),
@@ -11062,7 +11347,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                 resultado_usina = await cursor.fetchone()
                                 if resultado_usina:
                                     cod_usina = resultado_usina[0]
-                                    print(resultado_usina,'dentro do loop novo')
+                                #    print(resultado_usina,'dentro do loop novo')
                                     if cod_usina in contagem_ativos_por_usina:
                                         contagem_ativos_por_usina[cod_usina] -= 1
                                         if contagem_ativos_por_usina[cod_usina] <= 0:
@@ -11090,12 +11375,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                         if resultado is not None:
                             cod_usina = resultado[0]  # Obtém o primeiro elemento da tupla
                         else:
-                            print(f"Nenhuma usina encontrada para o equipamento {cod_equipamento}. Pulando...")
+                        #    print(f"Nenhuma usina encontrada para o equipamento {cod_equipamento}. Pulando...")
                             continue  # Pule para a próxima iteração se não houver usina
 
                         # Verificar se o equipamento já foi alertado
                         if cod_equipamento in [equip['cod_equipamento'] for equip in equipamentos_alertados]:
-                            print(f"Equipamento {cod_equipamento} já foi alertado anteriormente.")
+                        #    print(f"Equipamento {cod_equipamento} já foi alertado anteriormente.")
 
                             # Verificar se a usina já está no dicionário de alertas
                             if cod_usina not in usinas_alertadas:
@@ -11121,7 +11406,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                     len(usinas_alertadas[cod_usina]) / contagem_equipamentos_ativos
                                 ) * 100
                                 
-                                print(f"(equipamento {cod_equipamento} usina {cod_usina}) contagem_equipamentos_ativos {contagem_equipamentos_ativos}, equipamentos alertados {usinas_alertadas[cod_usina]}, percent_equipamentos_alertados {percent_equipamentos_alertados}")
+                            #    print(f"(equipamento {cod_equipamento} usina {cod_usina}) contagem_equipamentos_ativos {contagem_equipamentos_ativos}, equipamentos alertados {usinas_alertadas[cod_usina]}, percent_equipamentos_alertados {percent_equipamentos_alertados}")
 
                                 # Verificar a condição de alerta para enviar a mensagem
                                 if percent_equipamentos_alertados >= 15 and cod_usina not in usinas_enviadas:
@@ -11131,7 +11416,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                     result = await cursor.fetchone()
                                     if result:
                                         nome_usina, cod_modelo_funcionamento = result
-                                        print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento)
+                                #        print('equipamento', cod_equipamento, 'nome usina', nome_usina, 'o código de funcionamento é:', cod_modelo_funcionamento)
 
                                         # Buscar todos os cod_usuario associados à usina
                                         await cursor.execute("SELECT cod_usuario FROM sup_geral.usuarios_ext_usinas WHERE cod_usuario != 0 AND cod_usina = %s", (cod_usina,))
@@ -11213,7 +11498,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                                                                         if somente_telefone == 1:
 
-                                                                            print('inicio do payload previsao novo')
+                                                                        #    print('inicio do payload previsao novo')
 
                                                                             # Se o telefone for uma tupla, extrai o primeiro elemento
                                                                             if isinstance(telefone, tuple):
@@ -11274,15 +11559,17 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                                                     }
 
                                                                                     start_chat(payload)  # Chama a função para enviar via WhatsApp
-                                                                                    print('payload',payload)
+                                                                            #        print('payload',payload)
                                                                             else:
-                                                                                print("Nenhum telefone encontrado para o usuário.")
+                                                                            #    print("Nenhum telefone encontrado para o usuário.")
+                                                                                pass
 
-                                                                            print('fim do payload previsao novo')
+#                                                                            print('fim do payload previsao novo')
                                                 
                                                 
                                                                     else:                                                                    
-                                                                        print(f"🔴 Alerta nao foi enviado pois o funcionamento nao e autorizado enviado para usina {cod_usina} com {percent_equipamentos_alertados}% dos equipamentos em alerta.")
+                                                                #        print(f"🔴 Alerta nao foi enviado pois o funcionamento nao e autorizado enviado para usina {cod_usina} com {percent_equipamentos_alertados}% dos equipamentos em alerta.")
+                                                                        pass
 
                                                                     if cod_usuario in usuarios_bloqueados:
                                                                         usuarios_bloqueados.remove(cod_usuario)
@@ -11410,19 +11697,19 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
 
                                 # Verifica se o valor atual de 'Load Speed' está acima de 50
                                 if load_speed_value < 50:
-                                    print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
+                                #    print(cod_equipamento, 'valor de load speed menor que 50', load_speed_value)
                                     # Se o valor de 'Load Speed' for menor que 50, pula para o próximo parâmetro
                                     continue
 
 
                             if chave_principal in previsoes:
-                                print(f'\nChave principal: {chave_principal}')
+                        #        print(f'\nChave principal: {chave_principal}')
 
                                 # Verificar previsões e valores reais
                                 for tipo_condicao in ['previsao', 'real']:
                                     if tipo_condicao in condicoes:
                                         tipo_chave_principal = tipo_condicao  # Definir se é previsao ou real
-                                        print(f"Tipo de Condição: {tipo_chave_principal}")
+                        #                print(f"Tipo de Condição: {tipo_chave_principal}")
 
                                         # Escolher as variáveis de contagem com base no tipo da chave principal
                                         if tipo_chave_principal == 'real':
@@ -11435,7 +11722,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                         # Verificar 'acima do limite'
                                         if contagem_acima.get(chave_principal, 0) == 1:
                                             condicoes_acima = condicoes[tipo_chave_principal].get('acima', {})
-                                            print(f"Condições 'acima': {condicoes_acima}")
+                        #                    print(f"Condições 'acima': {condicoes_acima}")
 
                                             if not condicoes_acima:  # Verifica se condicoes_acima está vazio
                                                 valores_reais_formatados = ', '.join(map(str, valores_atuais.get(chave_principal, ['N/A'])))
@@ -11449,7 +11736,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     f"Valores previstos: {valores_previstos_formatados}\n\n"
                                                 )
                                             #    await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
-                                                print(f'enviando mensagem {mensagem}')
+                        #                        print(f'enviando mensagem {mensagem}')
 
                                                 equipamentos_alertados.append({
                                                     'cod_equipamento': cod_equipamento,
@@ -11466,7 +11753,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                 """, (cod_equipamento,))
                                                 await conn.commit()
                                                                                             
-                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados sem condições específicas.")
+                        #                        print(f"Equipamento {cod_equipamento} adicionado à lista de alertados sem condições específicas.")
                                                 continue  # Vai para o próximo equipamento
 
                                             # Caso existam condicoes_acima, verificar parâmetros como antes
@@ -11484,12 +11771,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                #        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                #        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                                 elif tipo == 'previsao':
@@ -11498,12 +11785,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                #        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                #        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                             if todos_parametros_ok:
@@ -11524,7 +11811,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     f"Valores previstos: {valores_previstos_subparametro}\n"
                                                 )
                                             #    await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
-                                                print(f'enviando mensagem {mensagem}')
+                                            #    print(f'enviando mensagem {mensagem}')
 
                                                 # Adicionar o equipamento à lista de alertados
                                                 equipamentos_alertados.append({
@@ -11542,13 +11829,13 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                 """, (cod_equipamento,))
                                                 await conn.commit()
                                                 
-                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
+                                            #    print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
 
 
                                         # Verificar 'abaixo do limite'
                                         if contagem_abaixo.get(chave_principal, 0) == 1:
                                             condicoes_abaixo = condicoes[tipo_chave_principal].get('abaixo', {})
-                                            print(f"Condições 'abaixo': {condicoes_abaixo}")
+                                            # print(f"Condições 'abaixo': {condicoes_abaixo}")
                                             todos_parametros_ok = True
                                             parametros_violados = []
                                             subparametro = None  # Inicializa subparametro com um valor padrão
@@ -11565,12 +11852,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima, atual: {valor_real}, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        # print(f"Falha no parâmetro {subparametro}: esperado 'acima', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo, atual: {valor_real}, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        # print(f"Falha no parâmetro {subparametro}: esperado 'abaixo', mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                                 elif tipo == 'previsao':
@@ -11579,12 +11866,12 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                     if condicao == 'acima' and contagem_acima_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado acima na previsão, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        # print(f"Falha no parâmetro {subparametro}: esperado 'acima' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
                                                     elif condicao == 'abaixo' and contagem_abaixo_do_limite_previsao.get(subparametro, 0) != 1:
                                                         todos_parametros_ok = False
                                                         parametros_violados.append(f"{subparametro} (esperado abaixo na previsão, previsto: {valor_previsto})")
-                                                        print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
+                                                        # print(f"Falha no parâmetro {subparametro}: esperado 'abaixo' na previsão, mas não está. \n(Atual: {valor_real}, previsto: {valor_previsto})")
                                                         break
 
                                             if todos_parametros_ok:
@@ -11617,7 +11904,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                         f"Valores previstos: {valores_previstos_subparametro}\n"
                                                     )
 
-                                                print(f'enviando mensagem {mensagem}')
+                                                # print(f'enviando mensagem {mensagem}')
                                             #    await bot.send_message(id_usuario, mensagem, parse_mode='HTML')
 
                                                 # Adicionar o equipamento à lista de alertados
@@ -11636,7 +11923,7 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
                                                 """, (cod_equipamento,))
                                                 await conn.commit()
                                                 
-                                                print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
+                                                # print(f"Equipamento {cod_equipamento} adicionado à lista de alertados.")
                             else:
     #                            print('sem chave principal',chave_principal)
                                 pass
@@ -11658,8 +11945,8 @@ async def novo_enviar_previsao_valor_equipamento_alerta_novo(cod_equipamentos, t
         segundos_restantes = int(segundos % 60)
 
         # Exibindo o tempo total de execução
-        print('\n',f'loop número {contador_loop} ------------------------------------ fim novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada_final)
-        print(f'Tempo de execução do novo_enviar_previsao_valor_equipamento_alerta_novo: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
+        # print('\n',f'loop número {contador_loop} ------------------------------------ fim novo_enviar_previsao_valor_equipamento_alerta_novo -----------------------------------------------------', data_cadastro_formatada_final)
+        # print(f'Tempo de execução do novo_enviar_previsao_valor_equipamento_alerta_novo: {horas} horas, {minutos} minutos, {segundos_restantes} segundos\n')
 
         await asyncio.sleep(30)
 
@@ -12088,9 +12375,7 @@ if __name__ == "__main__":
 
 
 
-import asyncio
-import subprocess
-import json
+
 
 # Variáveis para armazenar as tarefas em execução
 task_processos_menos_pesados = None
@@ -12142,6 +12427,7 @@ async def on_startup(dp: Dispatcher):
         processos = [
             {'command': ['taskset', '-c', '2', 'python3', '/home/bruno/codigos/geracao_diaria.py'], 'task': None},
         #    {'command': ['taskset', '-c', '3', 'python3', '/home/bruno/codigos/monitorar_leituras_consecutivas.py'], 'task': None},
+            {'command': ['taskset', '-c', '3', 'python3', '/home/bruno/codigos/enviar_alerta_gerador_ligado.py', json.dumps(cod_equipamentos)], 'task': None},
             {'command': ['taskset', '-c', '4', 'python3', '/home/bruno/codigos/processar_equipamentos.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados_processar_equipamentos)], 'task': None},
             {'command': ['taskset', '-c', '5', 'python3', '/home/bruno/codigos/enviar_previsao.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)], 'task': None},
             {'command': ['taskset', '-c', '6', 'python3', '/home/bruno/codigos/enviar_alerta.py', json.dumps(cod_equipamentos), tabelas, json.dumps(cod_campo_especificados)], 'task': None},

@@ -1,7 +1,7 @@
 # enviar_previsao.py
 import sys
 import json
-from bot import enviar_previsao_valor_equipamento_alerta, create_pool, ultimos_alertas, alertas_enviados_previsao, hora_media_alerta_1, hora_media_alerta_saida, sem_mensagem_silenciado
+from bot import enviar_alerta_gerador_ligado, create_pool
 import aiomysql
 
 async def selecionar_GMG(pool):
@@ -38,22 +38,11 @@ async def main():
     # Criar conexão com o banco
     pool = await create_pool()
 
-    global ultimos_alertas
-    global alertas_enviados_previsao
-    global hora_media_alerta_1
-    global hora_media_alerta_saida
-
     # Obtenha parâmetros necessários
     tabelas = 'sup_geral.leituras'
     cod_equipamentos = await obter_equipamentos_validos(tabelas, pool)
-#    cod_campo_especificados_processar_equipamentos = ['3','6','7','8','9','10', '11', '16', '19', '23', '24', '114', '21','76','25','20','77', '120']
-    cod_campo_especificados = ['3', '114']
 
-    # cod_equipamentos = json.loads(sys.argv[1])  # Carrega usando JSON
-    # tabelas = sys.argv[2]
-    # cod_campo_especificados = json.loads(sys.argv[3])
-    
-    await enviar_previsao_valor_equipamento_alerta(cod_equipamentos, tabelas, cod_campo_especificados, pool)
+    await enviar_alerta_gerador_ligado(cod_equipamentos, pool)
 
 # Rodar o processo assíncrono
 if __name__ == '__main__':
